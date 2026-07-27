@@ -1,0 +1,642 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  fplBot - a scheduled Fantasy Premier League transfer-recommendation service.
+  Polls hourly, detects an approaching gameweek deadline, ingests official and
+  third-party football data, scores every player, and emails a ranked buy/sell
+  board.
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, prod]
+    Description: >
+      Deployment environment. Drives resource naming, log retention and whether
+      the schedules are actually enabled.
+
+  EmailFrom:
+    Type: String
+    Description: >
+      Verified SES sender address. SES will not send from an unverified identity;
+      deploy.sh creates the identity and reminds you to click the confirmation link.
+
+  EmailTo:
+    Type: String
+    Description: Comma-separated recipient list. In the SES sandbox each must be verified.
+
+  Season:
+    Type: String
+    Default: "2026-27"
+    Description: FPL season label. Used as the DynamoDB partition key prefix.
+
+  ContactUrl:
+    Type: String
+    Default: "https://github.com/MasonGallagher/fplBot"
+    Description: >
+      Contact URL embedded in our User-Agent. An honest UA with a way to reach us
+      is the cheapest thing we can do to stay welcome on other people's servers.
+
+  OddsApiKeyParameter:
+    Type: String
+    Default: ""
+    Description: >
+      Optional SSM Parameter Store name holding The Odds API key (SecureString).
+      Leave empty to disable the source entirely - ClubElo covers 1X2 and clean
+      sheets, so the only loss is player-level goalscorer pricing.
+
+  SchedulesEnabled:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Set to false to deploy everything without arming the schedules. Useful for a
+      first deploy, or to silence the bot without tearing the stack down.
+
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Optional address for CloudWatch alarm notifications. Empty disables the topic.
+
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: [DEBUG, INFO, WARNING, ERROR]
+
+  DryRun:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Build the report but do not send it. Ideal for a first live run.
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+  HasOddsApiKey: !Not [!Equals [!Ref OddsApiKeyParameter, ""]]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+  SchedulesOn: !Equals [!Ref SchedulesEnabled, "true"]
+
+# ---------------------------------------------------------------------------
+# Globals
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    # arm64 (Graviton2) is roughly 20% cheaper per GB-second than x86_64 and
+    # measurably faster for numpy work. Every dependency we use publishes an
+    # aarch64 manylinux wheel, so there is no compatibility cost.
+    Architectures: [arm64]
+    Runtime: python3.13
+    MemorySize: 1024
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref StateTable
+        BUCKET_NAME: !Ref RawArchiveBucket
+        EMAIL_FROM: !Ref EmailFrom
+        EMAIL_TO: !Ref EmailTo
+        SEASON: !Ref Season
+        ENVIRONMENT: !Ref Environment
+        FPLBOT_CONTACT_URL: !Ref ContactUrl
+        DRY_RUN: !Ref DryRun
+        LOG_LEVEL: !Ref LogLevel
+        ODDS_API_KEY_PARAMETER: !If [HasOddsApiKey, !Ref OddsApiKeyParameter, !Ref "AWS::NoValue"]
+        # Powertools configuration. POWERTOOLS_METRICS_NAMESPACE is required for
+        # EMF metrics to land anywhere useful.
+        POWERTOOLS_SERVICE_NAME: fplbot
+        POWERTOOLS_METRICS_NAMESPACE: fplBot
+        POWERTOOLS_LOGGER_LOG_EVENT: "false"
+        POWERTOOLS_LOG_LEVEL: !Ref LogLevel
+    Tracing: Active
+    Layers:
+      - !Ref DependencyLayer
+
+Resources:
+  # -------------------------------------------------------------------------
+  # Dependencies
+  # -------------------------------------------------------------------------
+  DependencyLayer:
+    Type: AWS::Serverless::LayerVersion
+    Metadata:
+      BuildMethod: python3.13
+      BuildArchitecture: arm64
+    Properties:
+      LayerName: !Sub "fplbot-deps-${Environment}"
+      Description: httpx, pydantic, orjson, numpy, selectolax, rapidfuzz, powertools
+      ContentUri: layer/
+      CompatibleRuntimes: [python3.13]
+      CompatibleArchitectures: [arm64]
+      # Keep the previous version alive briefly so an in-flight invocation using
+      # it is not pulled out from under itself during a deploy.
+      RetentionPolicy: Delete
+
+  # -------------------------------------------------------------------------
+  # Storage
+  # -------------------------------------------------------------------------
+  StateTable:
+    Type: AWS::DynamoDB::Table
+    # Retain in prod: this table holds the snapshot series that trains the price
+    # model. A stack delete must not be able to destroy a season of data by
+    # accident - re-collecting it is impossible, not merely inconvenient.
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      TableName: !Sub "fplbot-state-${Environment}"
+      # On-demand: our traffic is a handful of writes per hour with no sustained
+      # baseline. Provisioned capacity would cost more and require capacity
+      # planning for a workload that does not vary.
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: fplbot
+        - Key: Environment
+          Value: !Ref Environment
+
+  RawArchiveBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: !If [IsProd, Retain, Delete]
+    UpdateReplacePolicy: !If [IsProd, Retain, Delete]
+    Properties:
+      BucketName: !Sub "fplbot-raw-${Environment}-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      VersioningConfiguration:
+        Status: Suspended
+      LifecycleConfiguration:
+        Rules:
+          # Raw payloads are read by backtests, not by the running system, so
+          # after 90 days Glacier Instant Retrieval is the right home: same
+          # millisecond access, roughly a quarter of the storage cost.
+          - Id: ArchiveRawPayloads
+            Status: Enabled
+            Prefix: raw/
+            Transitions:
+              - StorageClass: GLACIER_IR
+                TransitionInDays: 90
+          # Reports are small and occasionally re-read; keep them hot for a year.
+          - Id: ExpireOldReports
+            Status: Enabled
+            Prefix: reports/
+            ExpirationInDays: 400
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Project
+          Value: fplbot
+
+  # -------------------------------------------------------------------------
+  # Functions
+  # -------------------------------------------------------------------------
+  PollFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "fplbot-poll-${Environment}"
+      CodeUri: src/
+      Handler: fplbot.handlers.poll.handler
+      Description: Hourly poll - snapshot always, notify on tier crossings
+      Timeout: 120
+      # A scheduled singleton. Reserved concurrency of 1 is a hard guarantee that
+      # two runs can never overlap, which matters because concurrent runs would
+      # both try to snapshot the same hour and race on the notification lock.
+      # The lock would still hold - it is a conditional write - but the wasted
+      # work and duplicated third-party requests are worth preventing outright.
+      ReservedConcurrentExecutions: 1
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StateTable
+        - S3WritePolicy:
+            BucketName: !Ref RawArchiveBucket
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+              # Scope sending to our own verified identity. Without this
+              # condition, the policy would permit sending as any identity in the
+              # account, which is more authority than this function needs.
+              Condition:
+                StringEquals:
+                  ses:FromAddress: !Ref EmailFrom
+        - !If
+          - HasOddsApiKey
+          - Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParameter]
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${OddsApiKeyParameter}"
+              - Effect: Allow
+                Action: [kms:Decrypt]
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    kms:ViaService: !Sub "ssm.${AWS::Region}.amazonaws.com"
+          - !Ref "AWS::NoValue"
+
+  BackfillFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "fplbot-backfill-${Environment}"
+      CodeUri: src/
+      Handler: fplbot.handlers.backfill.handler
+      Description: Once-per-gameweek element-summary history backfill
+      # Separate function specifically for this longer timeout. element-summary is
+      # one request per player and 1.5s host spacing makes a batch slow; running
+      # it inside the 120s poll would either time out or force us to drop the
+      # politeness policy.
+      Timeout: 600
+      ReservedConcurrentExecutions: 1
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StateTable
+        - S3WritePolicy:
+            BucketName: !Ref RawArchiveBucket
+
+  # -------------------------------------------------------------------------
+  # Log groups - declared explicitly so retention is under our control
+  # -------------------------------------------------------------------------
+  # Lambda creates log groups implicitly with NEVER EXPIRE retention, which is a
+  # slow, quiet cost leak. Declaring them here sets retention from day one.
+  PollLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/fplbot-poll-${Environment}"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  BackfillLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/fplbot-backfill-${Environment}"
+      RetentionInDays: !If [IsProd, 90, 14]
+
+  # -------------------------------------------------------------------------
+  # Scheduling - EventBridge Scheduler, NOT the legacy Rules API
+  # -------------------------------------------------------------------------
+  # AWS::Scheduler::Schedule is the modern service. The SAM `Schedule` event type
+  # maps to the legacy Events Rules API, which is UTC-only - and a UTC-only
+  # schedule silently shifts by an hour relative to UK kick-off times when the
+  # clocks change. Scheduler supports a real timezone, so :07 past the hour stays
+  # :07 past the hour in London all year.
+  PollSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: SchedulesOn
+    Properties:
+      Name: !Sub "fplbot-poll-${Environment}"
+      Description: Hourly FPL poll at 7 minutes past, Europe/London
+      # :07 avoids the top-of-hour herd and lets FPL's 300s Fastly cache turn over.
+      ScheduleExpression: "cron(7 * * * ? *)"
+      ScheduleExpressionTimezone: Europe/London
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      State: ENABLED
+      Target:
+        Arn: !GetAtt PollFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: "{}"
+        RetryPolicy:
+          # Two retries only. Idempotency is handled by the DynamoDB conditional
+          # write, so a retry is safe - but a deadline does not wait, and after a
+          # few minutes a retry is answering a question nobody is asking any more.
+          MaximumRetryAttempts: 2
+          MaximumEventAgeInSeconds: 600
+        DeadLetterConfig:
+          Arn: !GetAtt ScheduleDeadLetterQueue.Arn
+
+  BackfillSchedule:
+    Type: AWS::Scheduler::Schedule
+    Condition: SchedulesOn
+    Properties:
+      Name: !Sub "fplbot-backfill-${Environment}"
+      Description: Weekly element-summary backfill, Tuesday 03:17 - after a gameweek finalises
+      # Tuesday early morning: the weekend's bonus points and data checks have
+      # settled by Monday night, and nothing else is competing for our attention.
+      ScheduleExpression: "cron(17 3 ? * TUE *)"
+      ScheduleExpressionTimezone: Europe/London
+      FlexibleTimeWindow:
+        Mode: FLEXIBLE
+        MaximumWindowInMinutes: 30
+      State: ENABLED
+      Target:
+        Arn: !GetAtt BackfillFunction.Arn
+        RoleArn: !GetAtt SchedulerRole.Arn
+        Input: "{}"
+        RetryPolicy:
+          MaximumRetryAttempts: 1
+          MaximumEventAgeInSeconds: 3600
+        DeadLetterConfig:
+          Arn: !GetAtt ScheduleDeadLetterQueue.Arn
+
+  ScheduleDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "fplbot-schedule-dlq-${Environment}"
+      MessageRetentionPeriod: 1209600  # 14 days
+      SqsManagedSseEnabled: true
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              # Confused-deputy protection: without this, any Scheduler in any
+              # account could in principle assume this role.
+              StringEquals:
+                aws:SourceAccount: !Ref "AWS::AccountId"
+      Policies:
+        - PolicyName: InvokeFunctions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt PollFunction.Arn
+                  - !GetAtt BackfillFunction.Arn
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: !GetAtt ScheduleDeadLetterQueue.Arn
+
+  # -------------------------------------------------------------------------
+  # SES identity
+  # -------------------------------------------------------------------------
+  SenderIdentity:
+    Type: AWS::SES::EmailIdentity
+    Properties:
+      EmailIdentity: !Ref EmailFrom
+
+  # -------------------------------------------------------------------------
+  # Alarms
+  # -------------------------------------------------------------------------
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      TopicName: !Sub "fplbot-alarms-${Environment}"
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  # The most important alarm in the stack. SPEC 6.3: silent schema drift is a
+  # bigger risk than an outright outage, because it produces confident, wrong
+  # recommendations. An outage is obvious; a changed field meaning is not.
+  SchemaDriftAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmName: !Sub "fplbot-${Environment}-schema-drift"
+      AlarmDescription: >
+        An upstream payload contained fields we do not know about. Not itself an
+        error - models use extra="allow" so this cannot break a run - but a new
+        field is often the visible edge of a semantic change to an existing one.
+        Investigate before it becomes a wrong recommendation.
+      Namespace: fplBot
+      MetricName: SchemaDriftDetected
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  InvariantViolationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmName: !Sub "fplbot-${Environment}-invariant-violated"
+      AlarmDescription: >
+        A business invariant failed - for example total ownership no longer sums
+        to ~1500%, or the team count is not 20. Every ownership-weighted
+        calculation downstream is suspect until this is understood.
+      Namespace: fplBot
+      MetricName: InvariantViolated
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  PollErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmName: !Sub "fplbot-${Environment}-poll-errors"
+      AlarmDescription: The poll function raised on two consecutive hourly runs.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PollFunction
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 2
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # A silent bot looks identical to a working bot. This alarm is what tells us
+  # the schedule stopped firing - arguably the failure most likely to go
+  # unnoticed, because nothing is broken and no error is logged.
+  PollSilenceAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmName: !Sub "fplbot-${Environment}-poll-silent"
+      AlarmDescription: >
+        The poll function has not been invoked for three hours. It should run
+        hourly, so this means the schedule is disabled, the role is broken, or
+        Scheduler is failing to invoke.
+      Namespace: AWS/Lambda
+      MetricName: Invocations
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref PollFunction
+      Statistic: Sum
+      Period: 10800
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  OddsQuotaAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmName: !Sub "fplbot-${Environment}-odds-quota-low"
+      AlarmDescription: >
+        The Odds API free tier is 500 credits a month. Below 80 remaining, player
+        props will be skipped to preserve a reserve for the rest of the month.
+      Namespace: fplBot
+      MetricName: OddsCreditsRemaining
+      Statistic: Minimum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 80
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  DeadLetterAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: HasAlarmEmail
+    Properties:
+      AlarmName: !Sub "fplbot-${Environment}-schedule-dlq"
+      AlarmDescription: EventBridge Scheduler failed to invoke a function and gave up.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ScheduleDeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+
+  # -------------------------------------------------------------------------
+  # Dashboard
+  # -------------------------------------------------------------------------
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "fplbot-${Environment}"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric", "x": 0, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Source health",
+                "region": "${AWS::Region}",
+                "stat": "Sum", "period": 3600,
+                "metrics": [
+                  [ "fplBot", "SourceFetchOk", { "label": "OK" } ],
+                  [ ".", "SourceFetchFailed", { "label": "Failed" } ],
+                  [ ".", "SourceDegraded", { "label": "Served from cache" } ],
+                  [ ".", "CircuitBreakerOpen", { "label": "Breaker open" } ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 0, "width": 12, "height": 6,
+              "properties": {
+                "title": "Data integrity (alarm on any non-zero)",
+                "region": "${AWS::Region}",
+                "stat": "Sum", "period": 3600,
+                "metrics": [
+                  [ "fplBot", "SchemaDriftDetected" ],
+                  [ ".", "InvariantViolated" ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Player id resolution",
+                "region": "${AWS::Region}",
+                "stat": "Sum", "period": 86400,
+                "metrics": [
+                  [ "fplBot", "PlayersResolvedExact", { "label": "Exact join" } ],
+                  [ ".", "PlayersResolvedFuzzy", { "label": "Fuzzy" } ],
+                  [ ".", "PlayersUnresolved", { "label": "Unresolved" } ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 12, "y": 6, "width": 12, "height": 6,
+              "properties": {
+                "title": "Notifications and quota",
+                "region": "${AWS::Region}",
+                "stat": "Sum", "period": 86400,
+                "metrics": [
+                  [ "fplBot", "NotificationSent" ],
+                  [ ".", "NotificationSuppressed" ],
+                  [ ".", "RunAbandonedStale" ],
+                  [ ".", "OddsCreditsRemaining", { "stat": "Minimum" } ]
+                ]
+              }
+            },
+            {
+              "type": "metric", "x": 0, "y": 12, "width": 24, "height": 6,
+              "properties": {
+                "title": "Lambda",
+                "region": "${AWS::Region}",
+                "period": 3600,
+                "metrics": [
+                  [ "AWS/Lambda", "Invocations", "FunctionName", "${PollFunction}", { "stat": "Sum" } ],
+                  [ ".", "Errors", ".", ".", { "stat": "Sum" } ],
+                  [ ".", "Duration", ".", ".", { "stat": "Average" } ],
+                  [ ".", "Duration", ".", ".", { "stat": "Maximum" } ]
+                ]
+              }
+            }
+          ]
+        }
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+  PollFunctionName:
+    Description: Invoke manually with `aws lambda invoke --function-name <this>`
+    Value: !Ref PollFunction
+    Export:
+      Name: !Sub "${AWS::StackName}-PollFunctionName"
+
+  BackfillFunctionName:
+    Value: !Ref BackfillFunction
+
+  TableName:
+    Value: !Ref StateTable
+
+  BucketName:
+    Value: !Ref RawArchiveBucket
+
+  DashboardUrl:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=fplbot-${Environment}"
+
+  VerifySenderCommand:
+    Description: SES will not send until this identity is verified - click the link AWS emails you.
+    Value: !Sub "aws sesv2 get-email-identity --email-identity ${EmailFrom} --region ${AWS::Region}"

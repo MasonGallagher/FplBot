@@ -1,0 +1,606 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: >
+  CI/CD pipeline for fplBot. Source -> Test -> Build -> Deploy(dev) ->
+  Manual approval -> Deploy(prod). Deployed once, separately from the application
+  stack it deploys.
+
+# ---------------------------------------------------------------------------
+# WHY THIS SHAPE
+# ---------------------------------------------------------------------------
+# Three deliberate choices, each of which is a common thing to get wrong:
+#
+# 1. THE PIPELINE IS ITS OWN STACK. It deploys the application stack; it is not
+#    part of it. If they shared a stack, a broken application template could put
+#    the pipeline that fixes it into ROLLBACK_FAILED - you would have to repair
+#    the deployment mechanism by hand before you could deploy the repair.
+#
+# 2. TEST AND BUILD ARE SEPARATE STAGES. Tests run on plain Python with no AWS
+#    credentials at all, which is the strongest possible proof that the test
+#    suite does not touch live infrastructure (SPEC section 7: "tests must never
+#    hit live APIs"). If a test needed a credential it would fail here, loudly.
+#
+# 3. PROD IS GATED BY A HUMAN. This bot emails recommendations on a schedule; a
+#    bad deploy at T-3h on a Saturday is a wasted gameweek. Thirty seconds of
+#    human attention is cheap insurance for a system whose failures are timed.
+# ---------------------------------------------------------------------------
+
+Parameters:
+  GitHubConnectionArn:
+    Type: String
+    Description: >
+      CodeStar Connections ARN for GitHub. Create it once in the console
+      (Developer Tools -> Settings -> Connections) and authorise it - the OAuth
+      handshake cannot be automated, which is the point of it.
+
+  GitHubRepository:
+    Type: String
+    Default: MasonGallagher/fplBot
+    Description: owner/repo
+
+  GitHubBranch:
+    Type: String
+    Default: main
+
+  EmailFrom:
+    Type: String
+    Description: Verified SES sender, passed through to the application stack.
+
+  EmailTo:
+    Type: String
+    Description: Comma-separated recipients.
+
+  AlarmEmail:
+    Type: String
+    Default: ""
+
+  Season:
+    Type: String
+    Default: "2026-27"
+
+  NotificationEmail:
+    Type: String
+    Default: ""
+    Description: Optional address for pipeline success/failure notifications.
+
+Conditions:
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, ""]]
+
+Resources:
+  # -------------------------------------------------------------------------
+  # Artefact storage
+  # -------------------------------------------------------------------------
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "fplbot-pipeline-artifacts-${AWS::AccountId}-${AWS::Region}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          # Build artefacts are worthless after a fortnight and accumulate
+          # relentlessly. Nothing here is worth paying to store long-term.
+          - Id: ExpireArtifacts
+            Status: Enabled
+            ExpirationInDays: 14
+            NoncurrentVersionExpirationInDays: 7
+          - Id: AbortIncompleteUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 3
+
+  # -------------------------------------------------------------------------
+  # CodeBuild: test
+  # -------------------------------------------------------------------------
+  TestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-test"
+      Description: Lint, type-check and unit tests. No AWS credentials required.
+      ServiceRole: !GetAtt TestRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        # ARM_CONTAINER so tests run on the same architecture the functions do.
+        # Not merely tidy: numpy behaviour and wheel availability differ between
+        # architectures, and testing on x86 while deploying to arm64 means the
+        # one thing you never test is the thing you ship.
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-test.yml
+      TimeoutInMinutes: 15
+      Cache:
+        Type: LOCAL
+        Modes: [LOCAL_CUSTOM_CACHE]
+
+  # -------------------------------------------------------------------------
+  # CodeBuild: build (sam build + package)
+  # -------------------------------------------------------------------------
+  BuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-build"
+      Description: sam build and package, producing a deployable template.
+      ServiceRole: !GetAtt BuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+        EnvironmentVariables:
+          - Name: ARTIFACT_BUCKET
+            Value: !Ref ArtifactBucket
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-build.yml
+      TimeoutInMinutes: 20
+      Cache:
+        Type: LOCAL
+        Modes: [LOCAL_CUSTOM_CACHE]
+
+  # -------------------------------------------------------------------------
+  # CodeBuild: smoke test after a dev deploy
+  # -------------------------------------------------------------------------
+  SmokeProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-smoke"
+      Description: Invoke the freshly deployed dev function in dry-run mode.
+      ServiceRole: !GetAtt SmokeRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: ARM_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:3.0
+        EnvironmentVariables:
+          - Name: FUNCTION_NAME
+            Value: fplbot-poll-dev
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: pipeline/buildspec-smoke.yml
+      TimeoutInMinutes: 10
+
+  # -------------------------------------------------------------------------
+  # The pipeline
+  # -------------------------------------------------------------------------
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${AWS::StackName}"
+      RoleArn: !GetAtt PipelineRole.Arn
+      # V2 gives us pipeline-level variables and better trigger filtering.
+      PipelineType: V2
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      RestartExecutionOnUpdate: false
+
+      Stages:
+        # -- Source -------------------------------------------------------
+        - Name: Source
+          Actions:
+            - Name: GitHub
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeStarSourceConnection
+                Version: "1"
+              Configuration:
+                ConnectionArn: !Ref GitHubConnectionArn
+                FullRepositoryId: !Ref GitHubRepository
+                BranchName: !Ref GitHubBranch
+                # Webhook-driven rather than polled: faster, and polling costs
+                # money for no benefit.
+                DetectChanges: true
+              OutputArtifacts:
+                - Name: SourceCode
+              RunOrder: 1
+
+        # -- Test ---------------------------------------------------------
+        # Deliberately its own stage rather than a step inside Build. A failure
+        # here is a *code* failure and reads as one in the console, rather than
+        # being buried inside a build log.
+        - Name: Test
+          Actions:
+            - Name: LintAndUnitTests
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref TestProject
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: TestResults
+              RunOrder: 1
+
+        # -- Build --------------------------------------------------------
+        - Name: Build
+          Actions:
+            - Name: SamBuild
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref BuildProject
+              InputArtifacts:
+                - Name: SourceCode
+              OutputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+
+        # -- Deploy to dev ------------------------------------------------
+        # CHANGE_SET_REPLACE followed by CHANGE_SET_EXECUTE, rather than a direct
+        # CREATE_UPDATE. The change set is visible in the console before it runs,
+        # so a surprise resource replacement (a DynamoDB table, say) is
+        # inspectable rather than discovered afterwards.
+        - Name: DeployDev
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                StackName: fplbot-dev
+                ChangeSetName: fplbot-dev-changeset
+                TemplatePath: BuildOutput::packaged.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "dev",
+                    "EmailFrom": "${EmailFrom}",
+                    "EmailTo": "${EmailTo}",
+                    "AlarmEmail": "${AlarmEmail}",
+                    "Season": "${Season}",
+                    "DryRun": "true",
+                    "SchedulesEnabled": "false",
+                    "LogLevel": "DEBUG"
+                  }
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                StackName: fplbot-dev
+                ChangeSetName: fplbot-dev-changeset
+              RunOrder: 2
+
+            - Name: SmokeTest
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              Configuration:
+                ProjectName: !Ref SmokeProject
+              InputArtifacts:
+                - Name: SourceCode
+              RunOrder: 3
+
+        # -- Human gate ---------------------------------------------------
+        - Name: ApproveProd
+          Actions:
+            - Name: ManualApproval
+              ActionTypeId:
+                Category: Approval
+                Owner: AWS
+                Provider: Manual
+                Version: "1"
+              Configuration:
+                CustomData: >
+                  Dev deployed and smoke-tested in dry-run mode. Approving will
+                  deploy to production with live schedules and real email sending.
+                  Check the dev CloudWatch logs for the rendered report before
+                  approving, especially if the model or the email template changed.
+                NotificationArn: !If
+                  - HasNotificationEmail
+                  - !Ref NotificationTopic
+                  - !Ref "AWS::NoValue"
+              RunOrder: 1
+
+        # -- Deploy to prod -----------------------------------------------
+        - Name: DeployProd
+          Actions:
+            - Name: CreateChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CHANGE_SET_REPLACE
+                StackName: fplbot-prod
+                ChangeSetName: fplbot-prod-changeset
+                TemplatePath: BuildOutput::packaged.yaml
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
+                RoleArn: !GetAtt CloudFormationRole.Arn
+                ParameterOverrides: !Sub |
+                  {
+                    "Environment": "prod",
+                    "EmailFrom": "${EmailFrom}",
+                    "EmailTo": "${EmailTo}",
+                    "AlarmEmail": "${AlarmEmail}",
+                    "Season": "${Season}",
+                    "DryRun": "false",
+                    "SchedulesEnabled": "true",
+                    "LogLevel": "INFO"
+                  }
+              InputArtifacts:
+                - Name: BuildOutput
+              RunOrder: 1
+
+            - Name: ExecuteChangeSet
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: "1"
+              Configuration:
+                ActionMode: CHANGE_SET_EXECUTE
+                StackName: fplbot-prod
+                ChangeSetName: fplbot-prod-changeset
+              RunOrder: 2
+
+  # -------------------------------------------------------------------------
+  # Notifications
+  # -------------------------------------------------------------------------
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasNotificationEmail
+    Properties:
+      TopicName: !Sub "${AWS::StackName}-notifications"
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref NotificationEmail
+
+  NotificationTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: HasNotificationEmail
+    Properties:
+      Topics: [!Ref NotificationTopic]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codestar-notifications.amazonaws.com
+            Action: SNS:Publish
+            Resource: !Ref NotificationTopic
+
+  PipelineNotifications:
+    Type: AWS::CodeStarNotifications::NotificationRule
+    Condition: HasNotificationEmail
+    Properties:
+      Name: !Sub "${AWS::StackName}-events"
+      DetailType: BASIC
+      Resource: !Sub "arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
+      EventTypeIds:
+        - codepipeline-pipeline-pipeline-execution-failed
+        - codepipeline-pipeline-pipeline-execution-succeeded
+        - codepipeline-pipeline-manual-approval-needed
+      Targets:
+        - TargetType: SNS
+          TargetAddress: !Ref NotificationTopic
+
+  # -------------------------------------------------------------------------
+  # IAM
+  # -------------------------------------------------------------------------
+  # Each role is scoped to what its stage actually needs. The test role has NO
+  # AWS permissions beyond writing its own logs - which is how we prove the test
+  # suite cannot reach live infrastructure even if someone writes a test that
+  # tries to.
+  TestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codebuild.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LogsAndArtifacts
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject]
+                Resource: !Sub "${ArtifactBucket.Arn}/*"
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codebuild.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: BuildAndPackage
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:GetBucketLocation]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+
+  SmokeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codebuild.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeDevFunction
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*"
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource: !Sub "${ArtifactBucket.Arn}/*"
+              # Scoped to the dev function specifically. The smoke test has no
+              # business being able to invoke production.
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:fplbot-poll-dev"
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: codepipeline.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: Orchestrate
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject, s3:GetBucketVersioning]
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action: [codebuild:BatchGetBuilds, codebuild:StartBuild]
+                Resource:
+                  - !GetAtt TestProject.Arn
+                  - !GetAtt BuildProject.Arn
+                  - !GetAtt SmokeProject.Arn
+              - Effect: Allow
+                Action: [codestar-connections:UseConnection]
+                Resource: !Ref GitHubConnectionArn
+              - Effect: Allow
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeStacks
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:SetStackPolicy
+                  - cloudformation:ValidateTemplate
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/fplbot-dev/*"
+                  - !Sub "arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/fplbot-prod/*"
+              # PassRole is how the pipeline hands CloudFormation its deployment
+              # role. Scoped to that one role - an unscoped iam:PassRole is
+              # effectively a privilege-escalation primitive.
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationRole.Arn
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !If
+                  - HasNotificationEmail
+                  - !Ref NotificationTopic
+                  - !Sub "arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:fplbot-nonexistent"
+
+  # The role CloudFormation itself assumes to create resources. This one is
+  # necessarily broad - it creates IAM roles, Lambda functions, DynamoDB tables
+  # and so on - which is exactly why it is a SEPARATE role from the pipeline's.
+  # The pipeline can only use it by passing it to CloudFormation; it cannot
+  # exercise these permissions directly.
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: {Service: cloudformation.amazonaws.com}
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # PowerUserAccess covers everything except IAM, so IAM is granted
+        # separately and narrowly below. For a single-owner personal project this
+        # is a reasonable balance; a shared account should tighten it to the
+        # specific services in template.yaml.
+        - !Sub "arn:${AWS::Partition}:iam::aws:policy/PowerUserAccess"
+      Policies:
+        - PolicyName: IamForApplicationResources
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:UpdateAssumeRolePolicy
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/fplbot-*"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/fplbot-dev-*"
+                  - !Sub "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/fplbot-prod-*"
+
+Outputs:
+  PipelineUrl:
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/codesuite/codepipeline/pipelines/${Pipeline}/view?region=${AWS::Region}"
+
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+
+  CloudFormationRoleArn:
+    Value: !GetAtt CloudFormationRole.Arn

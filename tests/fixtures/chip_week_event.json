@@ -1,0 +1,31 @@
+{
+  "description": "GW20 after a blank: 1.2m wildcards played. Contaminates transfer flow.",
+  "id": 20,
+  "name": "Gameweek 20",
+  "deadline_time_epoch": 1798153200,
+  "is_current": true,
+  "is_next": false,
+  "finished": false,
+  "transfers_made": 14500000,
+  "chip_plays": [
+    {
+      "chip_name": "wildcard",
+      "num_played": 1200000
+    },
+    {
+      "chip_name": "bboost",
+      "num_played": 180000
+    },
+    {
+      "chip_name": "3xc",
+      "num_played": 95000
+    },
+    {
+      "chip_name": "freehit",
+      "num_played": 340000
+    }
+  ],
+  "overrides": {
+    "rules": {}
+  }
+}

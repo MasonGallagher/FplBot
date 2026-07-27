@@ -1,0 +1,41 @@
+{
+  "description": "GW20: team 1 plays three times; teams 2, 3, 4 once each.",
+  "fixtures": [
+    {
+      "id": 200,
+      "event": 20,
+      "team_h": 1,
+      "team_a": 2,
+      "team_h_difficulty": 2,
+      "team_a_difficulty": 4,
+      "kickoff_time": "2026-12-26T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 201,
+      "event": 20,
+      "team_h": 3,
+      "team_a": 1,
+      "team_h_difficulty": 4,
+      "team_a_difficulty": 2,
+      "kickoff_time": "2026-12-28T20:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 202,
+      "event": 20,
+      "team_h": 1,
+      "team_a": 4,
+      "team_h_difficulty": 2,
+      "team_a_difficulty": 4,
+      "kickoff_time": "2026-12-30T19:30:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    }
+  ]
+}

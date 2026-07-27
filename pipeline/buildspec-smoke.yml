@@ -1,0 +1,65 @@
+version: 0.2
+
+# ---------------------------------------------------------------------------
+# Smoke test: invoke the freshly deployed dev function for real.
+#
+# The dev stack is deployed with DRY_RUN=true and SchedulesEnabled=false, so this
+# exercises the entire path - real HTTP to FPL, real DynamoDB writes, real S3
+# archival, real rendering - and stops short only of sending the email.
+#
+# This catches the class of failure unit tests structurally cannot: a missing IAM
+# permission, a wrong environment variable, a layer that imports fine locally and
+# not on arm64, a handler path typo. Every one of those passes every test and
+# fails on first invocation.
+# ---------------------------------------------------------------------------
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.13
+
+  build:
+    commands:
+      - echo "Invoking ${FUNCTION_NAME} in dry-run mode"
+      - |
+        aws lambda invoke \
+          --function-name "$FUNCTION_NAME" \
+          --cli-binary-format raw-in-base64-out \
+          --payload '{}' \
+          --log-type Tail \
+          --query 'LogResult' \
+          --output text \
+          response.json > log.b64 || { echo "Invocation call failed"; exit 1; }
+      - echo "--- Function logs ---"
+      - base64 -d log.b64 || true
+      - echo "--- Response ---"
+      - cat response.json
+
+  post_build:
+    commands:
+      # A 200 with a recognised status is the pass condition. Note that
+      # `snapshot_only` and `no_deadline` are both SUCCESSES: outside a
+      # notification window, or in the off-season, doing nothing is the correct
+      # behaviour and the smoke test must not treat it as a failure.
+      - |
+        python - <<'PY'
+        import json, sys
+
+        with open("response.json") as handle:
+            payload = json.load(handle)
+
+        print("Parsed response:", json.dumps(payload, indent=2))
+
+        if payload.get("errorMessage"):
+            print("FAIL: the function raised:", payload["errorMessage"])
+            sys.exit(1)
+
+        status = (payload.get("body") or {}).get("status")
+        acceptable = {"snapshot_only", "sent", "suppressed", "no_deadline"}
+
+        if status not in acceptable:
+            print(f"FAIL: unexpected status {status!r}; expected one of {sorted(acceptable)}")
+            sys.exit(1)
+
+        print(f"PASS: function returned status {status!r}")
+        PY

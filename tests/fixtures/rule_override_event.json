@@ -1,0 +1,16 @@
+{
+  "description": "A gameweek with a non-empty overrides.rules block.",
+  "id": 25,
+  "name": "Gameweek 25",
+  "deadline_time_epoch": 1801177200,
+  "is_current": false,
+  "is_next": true,
+  "finished": false,
+  "chip_plays": [],
+  "overrides": {
+    "rules": {
+      "squad_squadsize": 16
+    },
+    "scoring": {}
+  }
+}

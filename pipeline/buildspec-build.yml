@@ -1,0 +1,72 @@
+version: 0.2
+
+# ---------------------------------------------------------------------------
+# Build stage: `sam build` then `sam package`.
+#
+# Note there is no `--use-container` here. The CodeBuild image is already
+# ARM_CONTAINER on Amazon Linux 2 - the same architecture and a compatible libc
+# to the Lambda arm64 runtime - so building natively is both correct and
+# considerably faster than starting Docker inside a build container.
+#
+# Locally, `deploy.sh` DOES use --use-container, because a developer's machine
+# is very unlikely to be Amazon Linux on aarch64 and binary wheels compiled
+# against the wrong libc fail at import time in Lambda with an error message
+# that tells you almost nothing.
+# ---------------------------------------------------------------------------
+
+env:
+  variables:
+    SAM_CLI_TELEMETRY: "0"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.13
+    commands:
+      - python -m pip install --upgrade pip
+      - pip install aws-sam-cli
+
+  pre_build:
+    commands:
+      - echo "Validating the template before spending time on a build"
+      - sam validate --template template.yaml --lint
+
+  build:
+    commands:
+      - echo "--- sam build ---"
+      - sam build --template template.yaml --parallel
+      - echo "--- Layer size check ---"
+      # Lambda's hard limit is 250 MB unzipped across function plus layers.
+      # Checking it here turns a deploy-time rejection into a build-time failure
+      # with a number attached, which is a much better error to receive.
+      - |
+        LAYER_DIR=.aws-sam/build/DependencyLayer
+        if [ -d "$LAYER_DIR" ]; then
+          SIZE_MB=$(du -sm "$LAYER_DIR" | cut -f1)
+          echo "Dependency layer: ${SIZE_MB} MB unzipped"
+          if [ "$SIZE_MB" -gt 220 ]; then
+            echo "ERROR: layer is ${SIZE_MB} MB, leaving under 30 MB of the 250 MB budget."
+            echo "Check whether scipy or pandas has been pulled in transitively."
+            exit 1
+          fi
+        fi
+
+  post_build:
+    commands:
+      - echo "--- sam package ---"
+      - |
+        sam package \
+          --template-file .aws-sam/build/template.yaml \
+          --s3-bucket "$ARTIFACT_BUCKET" \
+          --s3-prefix sam-artifacts \
+          --output-template-file packaged.yaml
+      - echo "Packaged template written to packaged.yaml"
+
+cache:
+  paths:
+    - "/root/.cache/pip/**/*"
+
+artifacts:
+  files:
+    - packaged.yaml
+  discard-paths: yes

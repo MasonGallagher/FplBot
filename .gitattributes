@@ -1,0 +1,25 @@
+# Normalise line endings.
+#
+# The important line is the one for *.sh. Git on Windows checks files out with
+# CRLF by default, and a shell script with CRLF line endings fails on Linux and
+# macOS with `bad interpreter: /usr/bin/env bash^M` - which is a genuinely
+# baffling error the first time you meet it. `deploy.sh` is the entry point to
+# this whole project, so it must be LF wherever it is checked out.
+#
+# The same applies to anything CodeBuild executes.
+
+* text=auto
+
+*.sh        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.py        text eol=lf
+*.toml      text eol=lf
+*.md        text eol=lf
+*.json      text eol=lf
+Makefile    text eol=lf
+.env.example text eol=lf
+
+*.png       binary
+*.jpg       binary
+*.gz        binary

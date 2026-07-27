@@ -1,0 +1,4 @@
+{
+  "_comment": "Force a notification tier regardless of time to deadline. Still respects the DynamoDB idempotency lock, so it cannot send the same tier twice.",
+  "force_tier": "48h"
+}

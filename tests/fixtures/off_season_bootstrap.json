@@ -1,0 +1,15 @@
+{
+  "description": "Off-season: no events published. Must exit cleanly, not raise.",
+  "elements": [],
+  "events": [],
+  "teams": [],
+  "element_types": [],
+  "total_players": 0,
+  "game_config": {
+    "settings": {
+      "timezone": "UTC"
+    },
+    "rules": {},
+    "scoring": {}
+  }
+}

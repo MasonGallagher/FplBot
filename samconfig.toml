@@ -1,0 +1,31 @@
+version = 0.1
+
+# SAM CLI configuration. deploy.sh passes these explicitly, so this file mainly
+# serves bare `sam build` / `sam deploy` invocations and `sam local`.
+
+[default.global.parameters]
+stack_name = "fplbot-dev"
+region = "eu-west-2"
+
+[default.build.parameters]
+parallel = true
+# Build inside a container matching the Lambda runtime. numpy, orjson, selectolax
+# and rapidfuzz all ship compiled code, and a wheel built against the wrong libc
+# or architecture imports fine on your machine and fails inside Lambda with an
+# error that names a .so file and nothing useful.
+use_container = true
+build_image = "public.ecr.aws/sam/build-python3.13:latest-arm64"
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM CAPABILITY_AUTO_EXPAND"
+confirm_changeset = true
+resolve_s3 = true
+tags = "Project=\"fplbot\" ManagedBy=\"sam\""
+
+[default.local_invoke.parameters]
+# Local invocation defaults to dry-run so that a `sam local invoke` while
+# experimenting cannot send a real email.
+parameter_overrides = "DryRun=true"
+
+[default.sync.parameters]
+watch = true
