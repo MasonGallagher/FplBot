@@ -1,0 +1,333 @@
+# The model
+
+How a player becomes a number, and why that number is a distribution.
+
+> **This section is provisional, and says so.** SPEC §5 is explicit that every
+> coefficient here is a starting prior awaiting a fit against historical
+> gameweeks. They all live in one `ModelTunables` object in `config.py` so that
+> replacing them is a single change rather than an archaeology exercise.
+
+---
+
+## 1. The shape
+
+```
+xP = P(appears) x [ xP_attacking + xP_defensive + xP_bonus + xP_defcon ]
+     + xP_appearance
+```
+
+Rather than composing those expectations analytically, we run a **Monte Carlo**.
+For each player we draw 4,000 samples, and each sample walks the whole causal
+chain:
+
+```
+  minutes bucket
+       |
+       v
+    minutes  --> appearance points
+       |
+       +--> goals    ~ Poisson(xG90 x strength x minutes/90)
+       +--> assists  ~ Poisson(xA90 x strength x minutes/90)
+       +--> conceded ~ Poisson(-ln(P(clean sheet)))
+       |         |
+       |         +--> clean sheet = (conceded == 0) and minutes >= 60
+       |         +--> -1 per 2 conceded, for GKP and DEF
+       +--> saves    ~ Poisson(...), goalkeepers only
+       +--> defcon   ~ gamma-Poisson, then thresholded
+       +--> bonus    conditional on returns, top ~50 players only
+       +--> cards    ~ Bernoulli
+```
+
+Two reasons for sampling rather than algebra, and the first is decisive.
+
+**The objective needs the shape, not the mean.** Under a rank-attacking objective
+(§4 below) the spread *is* the signal. And the shape here is a mixture: the points
+distribution conditional on "started" looks nothing like the one conditional on
+"came on for the last twenty minutes". There is no tidy closed form for that
+mixture, and no need for one.
+
+**Sampling gets the correlations right for free.** Goals conceded and the clean
+sheet are the same underlying event. Drawing conceded goals once and deriving the
+clean sheet from it makes them consistent by construction. Compose them
+analytically and you have to remember that dependency by hand, every time.
+
+The RNG is seeded from `(season, gameweek, tier)`, so a run is reproducible: a
+difference between two runs means the *data* changed, not the dice.
+
+---
+
+## 2. Minutes as a distribution
+
+This is the part most FPL models get wrong, and the argument is short.
+
+Two midfielders, both with an expected 60 minutes:
+
+- **A** starts every week and plays 60 minutes exactly.
+- **B** starts half the time (90 minutes) and is an unused substitute the rest.
+
+Identical expected minutes. Completely different point distributions: A is a
+steady 4-5, B is a bimodal mixture of 8 and 0. Under a rank-attacking objective
+that difference is the entire story, because the upside tail is what gains rank
+and the zero is what loses it.
+
+So we model four buckets with probabilities, and the scorer samples a bucket
+before anything else:
+
+| Bucket | Mean minutes | Spread |
+|---|---|---|
+| `starter` | 84 | 9 |
+| `rotation` | 55 | 20 |
+| `cameo` | 18 | 11 |
+| `out` | 0 | - |
+
+The probabilities come from three sources, in increasing order of authority:
+
+1. **Recent starts** (`starts` / games played), or - in pre-season, where those
+   fields hold *last* season's values - price as a proxy for squad status. Clubs
+   do not pay 12.0m for a substitute.
+2. **Predicted line-ups** from Fantasy Football Scout. The freshest signal
+   available, because it reflects press conferences. A named starter is floored
+   at 85%.
+3. **Availability**, which *caps* everything. A 25% player cannot be an 85%
+   starter, whatever a line-up predicted three days ago.
+
+Suspension short-circuits all of it: a ban is deterministic, not a fitness
+question, so there is no probability to model.
+
+---
+
+## 3. Components
+
+### Attacking - shrunk towards a positional prior
+
+Small samples are the dominant early-season failure mode. **A player with 90
+minutes and 1.0 xG is not a 1.0 xG/90 player** - he is a player about whom we know
+almost nothing.
+
+Empirical-Bayes shrinkage, with the prior weight expressed in "equivalent
+minutes":
+
+```
+w = minutes / (minutes + 450)
+estimate = w * observed + (1 - w) * prior
+```
+
+At 450 minutes (five full matches) you get a 50/50 blend. At 90 minutes you get
+17% weight on the player's own record. That is intentional: it takes real
+evidence to move away from the prior, and one hot afternoon is not real evidence.
+
+Source preference: Understat's **non-penalty** xG first (penalties are modelled
+separately via `penalties_order`, so counting them in the base rate would
+double-count designated takers), then FPL's own Opta per-90s, then the positional
+prior alone.
+
+Where a bookmaker has priced a player's anytime-goalscorer market, that is
+sharper than our xG chain - it is a liquid market's view, already devigged with
+the power method. We calibrate lambda so `P(>=1 goal)` matches the market
+(`lambda = -ln(1 - p)`) and blend 70/30 towards it, keeping our own minutes model
+applied on top because the market prices a full 90.
+
+### Fixture strength
+
+Preference order, and it matters:
+
+1. **Expected team goals** from ClubElo's scoreline distribution, or from devigged
+   odds. A ratio against the league average (1.42) is directly meaningful. Bounded
+   to [0.55, 1.9] - a 4.0-goal expectation should not quadruple one player's rate,
+   because a rout distributes goals across a squad.
+2. **FPL's `team_h_difficulty` / `team_a_difficulty`**, a populated, clean 1-5
+   scale.
+
+Conspicuously **not** in that list: `teams[].strength_attack_*`. Those are zero
+for all twenty teams, so a model built on them rates every fixture identically
+while appearing to work perfectly.
+
+### Clean sheets
+
+Straight from ClubElo: **home clean sheet = the sum of the `R:x-0` columns**. That
+is exactly the FPL clean-sheet input, from a model rather than from a bookmaker's
+shaded prices - and therefore already vig-free. Applying a devigging step to it
+would be actively wrong.
+
+We then calibrate the conceded-goals Poisson so that `P(0)` equals that
+probability exactly:
+
+```
+lambda = -ln(P(clean sheet))
+```
+
+which preserves a real model's headline number while giving a consistent
+distribution over every other scoreline.
+
+Note that goalkeeper and defender returns within a team are **strongly
+correlated**. That is a variance source, not just a shared mean, and it is why
+the Monte Carlo draws the team's conceded goals once per sample.
+
+### Defensive contribution
+
+The insight, from SPEC §5.2: model **P(hitting the threshold)**, not the mean
+rate. A player averaging 11 actions with high variance and one steady at 11 have
+very different hit rates against a threshold of 10 or 12 - the volatile one clears
+12 far more often, and under a threshold rule that is all that matters. Scoring on
+the mean would rate them identically.
+
+Two caveats live with the code:
+
+- **The thresholds are UNVERIFIED.** DEF 10, MID/FWD 12 is community consensus.
+  The API exposes the *points* for defensive contribution but not the thresholds.
+- **Actions are over-dispersed** relative to Poisson. A side under sustained
+  pressure racks up clearances in clusters, so a pure Poisson understates the tail
+  and therefore the hit rate. We use a gamma-Poisson mixture (a negative binomial)
+  to widen it.
+
+All five DefCon fields are currently zero for every player, so in GW1-5 the prior
+has to come from the vaastav archive.
+
+### Bonus
+
+Modelled only for the top ~50 players by BPS, and conditional on returns rather
+than free-standing. Below that it is noise, and modelling it for everyone would
+add variance without information while systematically flattering fringe players
+who occasionally top a low-BPS match.
+
+---
+
+## 4. Availability risk
+
+The headline feature: **transfer flow is a leading indicator of team news.** When
+a player picks up a knock in training, well-connected managers transfer him out
+before FPL updates `news`.
+
+Turning that into something usable takes four pieces of care, and each is where a
+naive implementation goes wrong.
+
+### 1. Normalise by ownership. Never use absolute counts.
+
+A 3%-owned and a 40%-owned player with the same absolute net-outflow are telling
+completely different stories. We use
+
+```
+net_event / (selected_by_percent x total_players)
+```
+
+- net flow as a fraction of *current owners*. Absolute counts are dominated by
+ownership and would put the same five template players at the top every week.
+
+### 2. Z-score against the player's own baseline
+
+Players have wildly different baseline churn. A rotation-risk midfielder is always
+being shuffled; a nailed defender is not. An EWMA of the player's own recent
+normalised flow is the right reference. A global distribution would flag the
+volatile players every week and never flag the stable one whose sudden movement is
+the actual signal.
+
+Below 12 snapshots we return `None` rather than a number. A confident-looking
+z-score derived from three observations is worse than an honest gap, because it
+ends up in an email as though it meant something.
+
+### 3. Discriminate the cause
+
+The hard part, and the source of most false positives. A spike has at least five
+plausible causes and only one is injury news:
+
+| Cause | Signature |
+|---|---|
+| **Bad news** | sharp, ownership-normalised, one-directional, often out-of-hours |
+| **Price bandwagon** | net **in**, correlates with `cost_change_event` momentum |
+| **Fixture swing** | gradual, coincides with a fixture change, affects team-mates |
+| **Post-DGW churn** | affects a whole team's players at once |
+| **Chip weeks** | contaminate everything |
+
+The benign explanations are tested **first**, so "bad news" is what remains once
+everything else is ruled out, rather than the default conclusion.
+
+The **team-mate correlation test** is the most valuable discriminator: an injury
+is idiosyncratic to one player, whereas a fixture swing or post-blank churn moves
+an entire club's roster together.
+
+Out-of-hours movement strengthens the case considerably. News breaks in the
+evening; routine transfer planning happens during the day.
+
+### 4. Discount chip contamination
+
+Wildcards inflate raw transfer counts by roughly 29% while contributing about 1.4%
+of genuine transfer pressure - a wildcarding manager is rebuilding a squad, not
+reacting to news about your player. `events[].chip_plays` gives us the counts to
+discount by, scaled by how heavy the week actually is.
+
+Without it, GW1-2, GW20-21 and every post-blank week read as alarming.
+
+### And it only ever adds risk
+
+Transfer flow can raise a player's risk but never lower it, and never to 1.0 on
+its own. A managers' stampede is evidence; it is not proof, and it must not be
+able to rule a fit player out.
+
+### The cold-start caveat, stated in the email
+
+Z-scoring needs snapshot history. Per-gameweek flows come free from
+`element-summary`, but *intra-gameweek* velocity does not exist until the bot has
+been running. **This feature will be weak for its first few gameweeks**, and the
+email says so rather than presenting a low-confidence signal as though it were
+sharp.
+
+---
+
+## 5. Ranking
+
+```
+score = xP - lambda * (ownership x xP) + mu * ceiling
+```
+
+with `lambda = 0.55` and `mu = 0.25` as starting priors.
+
+A 60%-owned player with 6.5 xP loses `0.55 x 0.60 x 6.5 = 2.15` points of *rank*
+value while keeping all 6.5 points of raw value. That gap is the entire point.
+
+Ranking is done **within each position**, because squads have positional slots -
+comparing a 4.0m defender with a 14.0m forward on raw xP is not a decision anyone
+actually makes.
+
+Hard filters first: `can_transact` false (FPL will not let you buy him at all),
+blank gameweek (zero points, with certainty), availability risk at or above 0.95.
+
+### Confidence is a separate axis from attractiveness
+
+A player can be a superb pick with low confidence - a differential whose fitness
+is unclear. The reader needs both, because they imply different actions: one is
+"buy", the other is "wait for the T-3h report".
+
+Confidence tracks *information quality*: sources disagreeing, an unresolved
+"Currently Being Assessed", a provisional kickoff time, or a distribution too wide
+relative to its mean.
+
+---
+
+## 6. Calibration - the part that actually matters
+
+**Hand-picked weights are a starting prior, not the deliverable.** SPEC §5.5 is
+unambiguous, and nothing above should be taken as a finding.
+
+### Point-in-time discipline is non-negotiable
+
+The single easiest way to build a model that looks excellent and performs
+terribly is to leak post-deadline information into a pre-deadline feature: final
+prices, final ownership, or *any* season-total column that includes the gameweek
+being predicted. Features must be reconstructed **as they stood at the deadline**,
+every time.
+
+The vaastav archive supports this because `gws/gwN.csv` is per-gameweek and joins
+on the FPL `element` id exactly.
+
+### Evaluate on decisions, not just correlation
+
+- Spearman correlation of predicted against actual points
+- Mean absolute error
+- **Decision-level metrics** - would this recommendation have gained rank?
+
+Benchmark against FPL's own `ep_next` (free, in bootstrap), the template team,
+and the overall average.
+
+**A model that cannot beat `ep_next` is not worth shipping.** The pipeline logs
+the Spearman correlation against `ep_next` on every run, so drift is visible over
+a season rather than discovered in a post-mortem.

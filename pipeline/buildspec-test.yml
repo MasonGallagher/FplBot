@@ -1,0 +1,79 @@
+version: 0.2
+
+# ---------------------------------------------------------------------------
+# Test stage. Runs with NO AWS credentials beyond writing its own logs.
+#
+# That is the point, not an oversight. SPEC section 7 requires that tests never
+# hit live APIs, and the cheapest way to guarantee it is to run them somewhere
+# that has no ability to reach anything. If a test grows a dependency on real
+# infrastructure, it fails here rather than passing quietly and burning quota.
+# ---------------------------------------------------------------------------
+
+env:
+  variables:
+    PYTHONPATH: src
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    # Settings are read lazily, but a few imports touch them. Providing dummies
+    # keeps the suite honest without needing a real environment.
+    TABLE_NAME: test-table
+    BUCKET_NAME: test-bucket
+    EMAIL_FROM: test@example.com
+    EMAIL_TO: test@example.com
+    SEASON: "2026-27"
+    AWS_DEFAULT_REGION: eu-west-2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.13
+    commands:
+      - echo "Python $(python --version)"
+      - python -m pip install --upgrade pip
+      - pip install -r layer/requirements.txt
+      - pip install -e ".[dev]"
+
+  pre_build:
+    commands:
+      - echo "--- Lint ---"
+      - ruff check src tests
+      - ruff format --check src tests
+      - echo "--- Types ---"
+      # Non-blocking. Type errors in glue code are worth knowing about but are
+      # not worth blocking a deadline-sensitive deploy over; the tests are the
+      # gate that matters.
+      - mypy src || echo "mypy reported issues (non-blocking)"
+
+  build:
+    commands:
+      - echo "--- Unit tests ---"
+      # -m "not live" excludes anything marked as hitting a real API. Belt and
+      # braces alongside having no credentials.
+      - pytest -m "not live" --cov=src/fplbot --cov-report=term-missing --cov-report=xml --junitxml=test-results.xml
+
+  post_build:
+    commands:
+      - echo "--- Template validation ---"
+      # cfn-lint catches template errors that only surface at deploy time
+      # otherwise - and finding them here saves a full pipeline round trip.
+      - pip install cfn-lint
+      - cfn-lint template.yaml pipeline/pipeline.yaml || echo "cfn-lint reported issues"
+
+reports:
+  pytest:
+    files:
+      - test-results.xml
+    file-format: JUNITXML
+  coverage:
+    files:
+      - coverage.xml
+    file-format: COBERTURAXML
+
+cache:
+  paths:
+    - "/root/.cache/pip/**/*"
+
+artifacts:
+  files:
+    - test-results.xml
+    - coverage.xml
+  discard-paths: yes

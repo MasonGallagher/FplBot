@@ -1,0 +1,548 @@
+{
+  "description": "Season complete: all 38 deadlines are in the past.",
+  "elements": [],
+  "events": [
+    {
+      "id": 1,
+      "name": "Gameweek 1",
+      "deadline_time_epoch": 1752706800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 2,
+      "name": "Gameweek 2",
+      "deadline_time_epoch": 1753311600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 3,
+      "name": "Gameweek 3",
+      "deadline_time_epoch": 1753916400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 4,
+      "name": "Gameweek 4",
+      "deadline_time_epoch": 1754521200,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 5,
+      "name": "Gameweek 5",
+      "deadline_time_epoch": 1755126000,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 6,
+      "name": "Gameweek 6",
+      "deadline_time_epoch": 1755730800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 7,
+      "name": "Gameweek 7",
+      "deadline_time_epoch": 1756335600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 8,
+      "name": "Gameweek 8",
+      "deadline_time_epoch": 1756940400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 9,
+      "name": "Gameweek 9",
+      "deadline_time_epoch": 1757545200,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 10,
+      "name": "Gameweek 10",
+      "deadline_time_epoch": 1758150000,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 11,
+      "name": "Gameweek 11",
+      "deadline_time_epoch": 1758754800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 12,
+      "name": "Gameweek 12",
+      "deadline_time_epoch": 1759359600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 13,
+      "name": "Gameweek 13",
+      "deadline_time_epoch": 1759964400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 14,
+      "name": "Gameweek 14",
+      "deadline_time_epoch": 1760569200,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 15,
+      "name": "Gameweek 15",
+      "deadline_time_epoch": 1761174000,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 16,
+      "name": "Gameweek 16",
+      "deadline_time_epoch": 1761778800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 17,
+      "name": "Gameweek 17",
+      "deadline_time_epoch": 1762383600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 18,
+      "name": "Gameweek 18",
+      "deadline_time_epoch": 1762988400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 19,
+      "name": "Gameweek 19",
+      "deadline_time_epoch": 1763593200,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 20,
+      "name": "Gameweek 20",
+      "deadline_time_epoch": 1764198000,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 21,
+      "name": "Gameweek 21",
+      "deadline_time_epoch": 1764802800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 22,
+      "name": "Gameweek 22",
+      "deadline_time_epoch": 1765407600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 23,
+      "name": "Gameweek 23",
+      "deadline_time_epoch": 1766012400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 24,
+      "name": "Gameweek 24",
+      "deadline_time_epoch": 1766617200,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 25,
+      "name": "Gameweek 25",
+      "deadline_time_epoch": 1767222000,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 26,
+      "name": "Gameweek 26",
+      "deadline_time_epoch": 1767826800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 27,
+      "name": "Gameweek 27",
+      "deadline_time_epoch": 1768431600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 28,
+      "name": "Gameweek 28",
+      "deadline_time_epoch": 1769036400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 29,
+      "name": "Gameweek 29",
+      "deadline_time_epoch": 1769641200,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 30,
+      "name": "Gameweek 30",
+      "deadline_time_epoch": 1770246000,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 31,
+      "name": "Gameweek 31",
+      "deadline_time_epoch": 1770850800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 32,
+      "name": "Gameweek 32",
+      "deadline_time_epoch": 1771455600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 33,
+      "name": "Gameweek 33",
+      "deadline_time_epoch": 1772060400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 34,
+      "name": "Gameweek 34",
+      "deadline_time_epoch": 1772665200,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 35,
+      "name": "Gameweek 35",
+      "deadline_time_epoch": 1773270000,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 36,
+      "name": "Gameweek 36",
+      "deadline_time_epoch": 1773874800,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 37,
+      "name": "Gameweek 37",
+      "deadline_time_epoch": 1774479600,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": false,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    },
+    {
+      "id": 38,
+      "name": "Gameweek 38",
+      "deadline_time_epoch": 1775084400,
+      "deadline_time": "2026-05-01T11:00:00Z",
+      "is_current": false,
+      "is_next": false,
+      "is_previous": true,
+      "finished": true,
+      "chip_plays": [],
+      "overrides": {
+        "rules": {}
+      }
+    }
+  ],
+  "teams": [],
+  "element_types": [],
+  "total_players": 11000000,
+  "game_config": {
+    "settings": {
+      "timezone": "UTC"
+    },
+    "rules": {},
+    "scoring": {}
+  }
+}

@@ -1,0 +1,32 @@
+# ---------------------------------------------------------------------------
+# Lambda dependency layer
+# ---------------------------------------------------------------------------
+# Everything here is installed into the layer, NOT into the function package.
+# The function package is then just our own source, which keeps `sam deploy`
+# uploads to a few dozen kilobytes and makes iteration fast.
+#
+# HARD CONSTRAINT: Lambda allows 250 MB unzipped across function + all layers.
+# The pinned set below comes to roughly 55 MB unzipped on arm64. Before adding
+# anything, check its unzipped size - it is very easy to blow the budget with a
+# single scientific-Python dependency.
+#
+# Deliberately ABSENT (see docs/DECISIONS.md ADR-003):
+#   scipy       - 121 MB unzipped. Nothing in v1 needs it.
+#   pandas      - large, and we have no dataframe-shaped problem at runtime.
+#   soccerdata  - assumes a persistent writable cache directory Lambda lacks.
+#   penaltyblog - transitively pulls scipy AND pandas. We implement the two
+#                 devigging methods we actually need in fplbot/domain/devig.py.
+# ---------------------------------------------------------------------------
+
+httpx==0.27.2                 # HTTP/2-capable client with a pluggable transport (respx mocks it)
+pydantic==2.9.2               # schema validation with extra="allow" for drift tolerance
+orjson==3.10.7                # fastest JSON parse; matters on the 3 MB bootstrap payload
+numpy==2.1.2                  # Monte Carlo sampling. ~18 MB on arm64, earns its place.
+selectolax==0.3.21            # Lexbor HTML parser. ~10x faster and far smaller than lxml.
+rapidfuzz==3.10.0             # fuzzy name matching fallback (token_set_ratio)
+aws-lambda-powertools==3.2.0  # structured logging, EMF metrics, tracing
+# Powertools' Tracer imports this lazily but unconditionally. The SAM template
+# sets `Tracing: Active`, so it IS needed at runtime - omitting it produces a
+# ModuleNotFoundError on the first cold start rather than a graceful degradation.
+# Tests set POWERTOOLS_TRACE_DISABLED=1 and therefore never touch it.
+aws-xray-sdk==2.14.0

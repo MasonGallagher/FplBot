@@ -1,0 +1,9 @@
+# Intentionally empty.
+#
+# All runtime dependencies live in layer/requirements.txt and are shipped as a
+# Lambda layer. This file exists because `sam build` expects a manifest next to
+# the function's CodeUri; keeping it empty means the function artefact contains
+# only our own source, which deploys in seconds rather than minutes.
+#
+# boto3 / botocore are provided by the Lambda runtime itself - never vendor them,
+# they are ~50 MB and you would be shipping a copy of something already present.

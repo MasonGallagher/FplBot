@@ -1,0 +1,66 @@
+[project]
+name = "fplbot"
+version = "1.0.0"
+description = "Scheduled AWS Lambda that emails a ranked FPL transfer board ahead of each gameweek deadline."
+requires-python = ">=3.13"
+
+# NOTE: runtime dependencies deliberately live in layer/requirements.txt rather than
+# here. The Lambda dependency layer is built from that file alone, and keeping a single
+# source of truth stops the layer and the local dev environment drifting apart.
+# See docs/DECISIONS.md ADR-002.
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-cov>=5.0",
+    "respx>=0.21",              # httpx transport mocking - tests never touch live APIs
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-boto3[dynamodb,s3,ses]>=1.35",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q --strict-markers"
+markers = [
+    "live: hits a real third-party API. Deselected by default; run explicitly with -m live.",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "RUF001", # we intentionally use unicode in docstrings (xG, ×, −)
+    "RUF002",
+    "RUF003",
+    # `BreakerOpen` and `LockAlreadyHeld` read as statements of fact at the call
+    # site ("except LockAlreadyHeld"), which is what they are. An `-Error` suffix
+    # would make them read as faults, and neither is a fault - both are expected
+    # control flow.
+    "N818",
+    # PEP 695 type parameters. The `Generic[T]` form is what most readers of this
+    # codebase will have seen, and `SourceResult` is a teaching example as much
+    # as a container. Worth revisiting once 3.13 syntax is universally familiar.
+    "UP046",
+    "UP047",
+]
+
+[tool.mypy]
+python_version = "3.13"
+packages = ["fplbot"]
+mypy_path = "src"
+warn_unused_ignores = true
+warn_redundant_casts = true
+disallow_untyped_defs = true
+# Third-party stubs are patchy; we care about our own types, not theirs.
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["src/fplbot"]
+omit = ["*/handlers/*"]  # handlers are thin; the logic they call is what we test

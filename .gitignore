@@ -1,0 +1,40 @@
+# Local configuration - contains email addresses and possibly an API key
+.env
+.env.*
+!.env.example
+
+# SAM
+.aws-sam/
+packaged.yaml
+samconfig.local.toml
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tests and tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+test-results.xml
+
+# Recorded fixtures can be large; the small curated set under
+# tests/fixtures/ IS committed, but ad-hoc recordings are not.
+fixtures/recorded/
+*.har
+
+# Editors and local tooling
+.vscode/
+.idea/
+*.swp
+.DS_Store
+.claude/settings.local.json

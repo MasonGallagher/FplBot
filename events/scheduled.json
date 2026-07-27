@@ -1,0 +1,3 @@
+{
+  "_comment": "Empty payload, as EventBridge Scheduler sends. Use with: sam local invoke PollFunction --event events/scheduled.json"
+}

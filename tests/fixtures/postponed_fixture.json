@@ -1,0 +1,29 @@
+{
+  "description": "One unscheduled fixture and one with a TBC kickoff time.",
+  "fixtures": [
+    {
+      "id": 400,
+      "event": null,
+      "team_h": 5,
+      "team_a": 6,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": null,
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 401,
+      "event": 30,
+      "team_h": 7,
+      "team_a": 8,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": "2027-03-20T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": true,
+      "stats": []
+    }
+  ]
+}

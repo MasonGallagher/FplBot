@@ -1,0 +1,77 @@
+{
+  "description": "GW29: FA Cup weekend. 12 teams play, 8 blank.",
+  "fixtures": [
+    {
+      "id": 290,
+      "event": 29,
+      "team_h": 1,
+      "team_a": 2,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": "2027-03-13T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 291,
+      "event": 29,
+      "team_h": 3,
+      "team_a": 4,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": "2027-03-13T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 292,
+      "event": 29,
+      "team_h": 5,
+      "team_a": 6,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": "2027-03-13T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 293,
+      "event": 29,
+      "team_h": 7,
+      "team_a": 8,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": "2027-03-13T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 294,
+      "event": 29,
+      "team_h": 9,
+      "team_a": 10,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": "2027-03-13T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    },
+    {
+      "id": 295,
+      "event": 29,
+      "team_h": 11,
+      "team_a": 12,
+      "team_h_difficulty": 3,
+      "team_a_difficulty": 3,
+      "kickoff_time": "2027-03-13T15:00:00Z",
+      "finished": false,
+      "provisional_start_time": false,
+      "stats": []
+    }
+  ]
+}
