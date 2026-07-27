@@ -225,6 +225,11 @@ class PlayerScore:
     element_id: int
     name: str
     team_short: str
+    # The numeric FPL team id. `team_short` is what the report prints, but the
+    # wildcard optimiser needs the id for the three-players-per-club rule, and
+    # resolving it back from a short name would be a lookup that can silently
+    # fail on a rename.
+    team_id: int
     position: str
     price: float
     ownership: float

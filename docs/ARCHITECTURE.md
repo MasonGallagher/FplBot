@@ -41,9 +41,10 @@ function. What happens next:
       8.    +--> resolve identities (photo code -> cache -> exact -> fuzzy)
       9.    +--> transfer-flow analysis -> availability signals
      10.    +--> score every player (Monte Carlo) -> Distribution
-     11.    +--> rank (rank-attacking objective) -> Board
-     12.    +--> render HTML + text
-     13.    +--> archive to S3, send via SES
+     11.    +--> project the season (neutral fixture x fixture load)
+     12.    +--> rank: buy board, captains, wildcard squad -> Board
+     13.    +--> render HTML + text
+     14.    +--> archive to S3, send via SES
 ```
 
 Steps 1-5 are cheap and always run. Step 6 onwards is the expensive half, and it
@@ -66,6 +67,9 @@ Dependency arrows point downwards only. Nothing below reaches up.
       v                   v                   v
   report/             sources/             domain/
   render + SES        ALL network I/O      PURE LOGIC
+                                           deadline, fixtures, identity,
+                                           scoring, ranking, captaincy,
+                                           horizon, squad
       |                   |                   ^
       |                   v                   |
       |               http/  storage/         |

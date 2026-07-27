@@ -581,6 +581,7 @@ def build_player_score(
         element_id=element.id,
         name=element.display_name(),
         team_short=team_short,
+        team_id=element.team,
         position=position,
         price=element.price,
         ownership=element.ownership,

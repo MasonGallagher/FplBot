@@ -51,6 +51,7 @@ def a_score(
         element_id=element_id,
         name=f"Player{element_id}",
         team_short="ARS",
+        team_id=1,
         position=position,
         price=price,
         ownership=ownership,

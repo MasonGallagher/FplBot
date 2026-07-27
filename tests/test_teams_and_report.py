@@ -5,7 +5,9 @@ from __future__ import annotations
 import numpy as np
 
 from fplbot.config import TUNABLES
+from fplbot.domain.captaincy import build_captain_picks
 from fplbot.domain.ranking import Board, build_buy_board
+from fplbot.domain.squad import optimise_squad
 from fplbot.domain.teams import assert_known_teams, canonical_team, resolve_team_id
 from fplbot.models.domain import (
     AvailabilitySignal,
@@ -18,6 +20,7 @@ from fplbot.models.domain import (
 )
 from fplbot.report.email import build_message, build_subject
 from fplbot.report.render import esc, render_failure_html, render_html, render_text
+from tests.test_squad import a_pool as a_squad_pool
 
 
 class TestTeamAliases:
@@ -67,6 +70,7 @@ def a_score(element_id: int, **overrides) -> PlayerScore:
         "element_id": element_id,
         "name": f"Player{element_id}",
         "team_short": "ARS",
+        "team_id": 1,
         "position": "MID",
         "price": 8.0,
         "ownership": 12.0,
@@ -114,9 +118,11 @@ class TestRendering:
 
         for heading in (
             "Buy board",
+            "Captain picks",
             "Sell / avoid",
             "Injury-signal watchlist",
             "Returning from injury",
+            "Best wildcard squad",
             "Caveats",
         ):
             assert heading in html
@@ -188,6 +194,92 @@ class TestRendering:
         assert "could not produce a reliable board" in html
         assert "30 hours old" in html
         assert "Source status" in html
+
+
+class TestCaptainSection:
+    def test_reports_the_doubled_numbers(self) -> None:
+        """The armband doubles the score, so the doubled figures are what we show.
+
+        Printing the single-score numbers here would make the reader do the
+        multiplication themselves, and the doubling is the entire point.
+        """
+        picks = build_captain_picks([a_score(1)], TUNABLES)
+        board = Board({}, [], [], [], captains=picks)
+
+        html = render_html(a_context(), board)
+
+        assert "Captained xP" in html
+        assert f"{picks[0].expected_points:.2f}" in html
+
+    def test_states_the_squad_caveat(self) -> None:
+        """You can only captain someone you already own - the bot cannot know that."""
+        board = Board({}, [], [], [], captains=build_captain_picks([a_score(1)], TUNABLES))
+
+        html = render_html(a_context(), board)
+
+        assert "only captain someone you already" in html
+
+    def test_labels_the_template_pick(self) -> None:
+        picks = build_captain_picks([a_score(1)], TUNABLES, most_captained_element=1)
+        board = Board({}, [], [], [], captains=picks)
+
+        assert "TEMPLATE" in render_html(a_context(), board)
+
+    def test_empty_captains_degrade_gracefully(self) -> None:
+        html = render_html(a_context(), Board({}, [], [], [], captains=[]))
+
+        assert "Captain picks" in html
+        assert "No captain candidates" in html
+
+
+class TestWildcardSection:
+    def test_renders_the_squad(self) -> None:
+        squad = optimise_squad(a_squad_pool(), TUNABLES, seed=1)
+        board = Board({}, [], [], [], wildcard=squad, horizon_note="Projected over 20 gameweeks.")
+
+        html = render_html(a_context(), board)
+
+        assert "Best wildcard squad" in html
+        assert squad is not None
+        assert squad.formation in html
+        assert "in the bank" in html
+        assert "Bench (in autosub order)" in html
+
+    def test_explains_why_the_bench_is_cheap(self) -> None:
+        """Otherwise a reader reasonably assumes the optimiser made a mistake."""
+        squad = optimise_squad(a_squad_pool(), TUNABLES, seed=1)
+        board = Board({}, [], [], [], wildcard=squad)
+
+        html = render_html(a_context(), board)
+
+        assert "only eleven players score" in html
+
+    def test_absent_squad_degrades_gracefully(self) -> None:
+        """Expected in pre-season, when there are no projections to optimise."""
+        html = render_html(a_context(), Board({}, [], [], [], wildcard=None))
+
+        assert "Best wildcard squad" in html
+        assert "No wildcard squad could be built" in html
+
+    def test_text_alternative_includes_both_new_sections(self) -> None:
+        squad = optimise_squad(a_squad_pool(), TUNABLES, seed=1)
+        board = Board(
+            {},
+            [],
+            [],
+            [],
+            captains=build_captain_picks([a_score(1)], TUNABLES),
+            wildcard=squad,
+            horizon_note="Projected over 20 gameweeks.",
+        )
+
+        text = render_text(a_context(), board)
+
+        assert "CAPTAIN PICKS" in text
+        assert "BEST WILDCARD SQUAD" in text
+        assert "captained" in text
+        assert "bench (autosub order)" in text
+        assert "<" not in text.replace("<-", "")
 
 
 class TestEmailAssembly:

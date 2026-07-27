@@ -82,12 +82,18 @@ def format_deadline(epoch: int) -> str:
 # ---------------------------------------------------------------------------
 def render_html(context: RunContext, board: Board) -> str:
     """Render the full report."""
+    # Captaincy sits directly under the buy board because it is a decision for
+    # this gameweek and the reader acts on it in the same sitting. The wildcard
+    # squad goes last before the caveats: it is a much rarer decision, and
+    # burying it slightly is the honest reflection of how often it applies.
     sections = [
         _header(context),
         _buy_board(board),
+        _captain_picks(board),
         _sell_list(board),
         _watchlist(board, context),
         _returning(board),
+        _wildcard_squad(board),
         _caveats(context.data_quality, context),
         _footer(context),
     ]
@@ -222,6 +228,185 @@ def _buy_row(rec: Recommendation, index: int) -> str:
       <td style="vertical-align:top;color:{confidence_colour};font-weight:600;">
         {esc(rec.confidence.value)}
       </td>
+    </tr>
+    """
+
+
+def _captain_picks(board: Board) -> str:
+    """Section 3. The armband.
+
+    Deliberately reports the *captained* numbers - doubled points, doubled floor,
+    doubled ceiling - because that is what actually lands in your score. Showing
+    the raw single-score figures here would make the reader do the multiplication
+    themselves, and the whole point of the section is the doubling.
+    """
+    heading = _section_heading("Captain picks")
+    intro = (
+        f'<p style="margin:0 0 8px;font-size:13px;color:{COLOURS["muted"]};">'
+        "Ranked on a captaincy-specific objective, not the transfer one: the armband "
+        "doubles the mean <em>and</em> the variance, so a weak floor is penalised hard "
+        "(a captain blank is a double zero) and ownership is discounted far more gently "
+        "than for a transfer. <strong>The bot does not know your squad, so these are the "
+        "players worth having the armband on - you can only captain someone you already "
+        "own.</strong></p>"
+    )
+
+    if not board.captains:
+        return heading + intro + _empty("No captain candidates passed the availability filter.")
+
+    rows = "\n".join(_captain_row(pick, index + 1) for index, pick in enumerate(board.captains))
+
+    return (
+        heading
+        + intro
+        + f"""
+        <table role="presentation" cellpadding="6" cellspacing="0" width="100%"
+               style="border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:{COLOURS["header_bg"]};text-align:left;">
+              <th style="width:24px;">#</th>
+              <th>Player</th>
+              <th style="text-align:right;">Captained xP</th>
+              <th style="text-align:right;" title="P10 - P90, doubled">Floor / Ceiling</th>
+              <th style="text-align:right;" title="P(20+ captained)">Haul</th>
+              <th style="text-align:right;">Owned</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody>{rows}</tbody>
+        </table>
+        """
+    )
+
+
+def _captain_row(pick, index: int) -> str:
+    score = pick.score
+    confidence_colour = CONFIDENCE_COLOUR[pick.confidence]
+
+    badges = ""
+    if pick.is_template:
+        badges += (
+            f' <span style="background:{COLOURS["header_bg"]};color:{COLOURS["muted"]};'
+            f'padding:1px 5px;border-radius:3px;font-size:11px;">TEMPLATE</span>'
+        )
+    if pick.is_differential:
+        badges += (
+            f' <span style="background:{COLOURS["accent"]};color:#ffffff;'
+            f'padding:1px 5px;border-radius:3px;font-size:11px;">DIFFERENTIAL</span>'
+        )
+    if score.fixture_count >= 2:
+        badges += (
+            f' <span style="color:{COLOURS["confirmed"]};font-weight:600;">'
+            f"DGW x{score.fixture_count}</span>"
+        )
+
+    details = [f'<em style="color:{COLOURS["muted"]};">{esc(pick.why)}</em>']
+    for warning in pick.warnings:
+        details.append(f'<span style="color:{COLOURS["warning"]};">&#9888; {esc(warning)}</span>')
+
+    return f"""
+    <tr style="border-top:1px solid {COLOURS["border"]};">
+      <td style="vertical-align:top;color:{COLOURS["muted"]};">{index}</td>
+      <td style="vertical-align:top;">
+        <strong>{esc(score.name)}</strong>
+        <span style="color:{COLOURS["muted"]};">({esc(score.team_short)})</span>{badges}
+        <div style="margin-top:3px;font-size:12px;">{"<br>".join(details)}</div>
+      </td>
+      <td style="vertical-align:top;text-align:right;">
+        <strong>{pick.expected_points:.2f}</strong>
+      </td>
+      <td style="vertical-align:top;text-align:right;color:{COLOURS["muted"]};">
+        {pick.captained_floor:.1f} / {pick.captained_ceiling:.1f}
+      </td>
+      <td style="vertical-align:top;text-align:right;">{pick.haul_probability:.0%}</td>
+      <td style="vertical-align:top;text-align:right;">{score.ownership:.1f}%</td>
+      <td style="vertical-align:top;color:{confidence_colour};font-weight:600;">
+        {esc(pick.confidence.value)}
+      </td>
+    </tr>
+    """
+
+
+def _wildcard_squad(board: Board) -> str:
+    """Section 7. The best GBP 100.0m squad for the rest of the season."""
+    heading = _section_heading("Best wildcard squad")
+    squad = board.wildcard
+
+    if squad is None:
+        return heading + _empty(
+            "No wildcard squad could be built - projections are unavailable "
+            "(expected before the season starts)."
+        )
+
+    intro = (
+        f'<p style="margin:0 0 4px;font-size:13px;">'
+        f"<strong>{esc(squad.formation)}</strong> &middot; "
+        f"GBP {squad.total_price:.1f}m spent, GBP {squad.money_left:.1f}m in the bank "
+        f"&middot; <strong>{squad.starting_xp:.0f} projected points</strong> from the XI "
+        f"to the end of the season</p>"
+        f'<p style="margin:0 0 8px;font-size:12px;color:{COLOURS["muted"]};">'
+        f"{esc(board.horizon_note)} {esc(squad.optimality_note)}</p>"
+    )
+
+    starters = "\n".join(
+        _squad_row(
+            player,
+            is_captain=squad.captain is not None and player.element_id == squad.captain.element_id,
+        )
+        for player in squad.starters
+    )
+    bench = "\n".join(_squad_row(player, is_captain=False) for player in squad.bench)
+
+    return (
+        heading
+        + intro
+        + f"""
+        <table role="presentation" cellpadding="5" cellspacing="0" width="100%"
+               style="border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:{COLOURS["header_bg"]};text-align:left;">
+              <th>Player</th>
+              <th style="text-align:right;">Price</th>
+              <th style="text-align:right;">This GW</th>
+              <th style="text-align:right;">Season xP</th>
+              <th style="text-align:right;">Owned</th>
+            </tr>
+          </thead>
+          <tbody>
+            {starters}
+            <tr><td colspan="5" style="padding-top:10px;font-size:11px;
+                 color:{COLOURS["muted"]};text-transform:uppercase;
+                 letter-spacing:0.05em;">Bench (in autosub order)</td></tr>
+            {bench}
+          </tbody>
+        </table>
+        <p style="margin:8px 0 0;font-size:12px;color:{COLOURS["muted"]};">
+          Squads are optimised on the best legal starting XI plus a light weight on the
+          bench, because only eleven players score. That is why the bench is cheap - it
+          is there to satisfy the squad rules, not to earn points.
+        </p>
+        """
+    )
+
+
+def _squad_row(player, *, is_captain: bool) -> str:
+    captain_badge = (
+        f' <span style="background:{COLOURS["confirmed"]};color:#ffffff;'
+        f'padding:1px 5px;border-radius:3px;font-size:11px;">C</span>'
+        if is_captain
+        else ""
+    )
+    return f"""
+    <tr style="border-top:1px solid {COLOURS["border"]};">
+      <td>
+        <span style="color:{COLOURS["muted"]};font-size:11px;">{esc(player.position)}</span>
+        &nbsp;<strong>{esc(player.name)}</strong>
+        <span style="color:{COLOURS["muted"]};">({esc(player.team_short)})</span>{captain_badge}
+      </td>
+      <td style="text-align:right;">{player.price:.1f}</td>
+      <td style="text-align:right;color:{COLOURS["muted"]};">{player.gameweek_xp:.1f}</td>
+      <td style="text-align:right;"><strong>{player.season_xp:.0f}</strong></td>
+      <td style="text-align:right;color:{COLOURS["muted"]};">{player.ownership:.1f}%</td>
     </tr>
     """
 
@@ -465,6 +650,31 @@ def render_text(context: RunContext, board: Board) -> str:
             for warning in rec.warnings:
                 lines.append(f"     ! {warning}")
 
+    lines += ["", "CAPTAIN PICKS", "-" * 60]
+    if board.captains:
+        lines.append("  (you can only captain someone you already own)")
+        for index, pick in enumerate(board.captains, start=1):
+            score = pick.score
+            flags = []
+            if pick.is_template:
+                flags.append("TEMPLATE")
+            if pick.is_differential:
+                flags.append("DIFFERENTIAL")
+            suffix = f"  [{', '.join(flags)}]" if flags else ""
+            lines.append(
+                f"  {index}. {score.name} ({score.team_short})  "
+                f"{pick.expected_points:.2f} captained  "
+                f"[{pick.captained_floor:.1f}-{pick.captained_ceiling:.1f}]  "
+                f"haul {pick.haul_probability:.0%}  "
+                f"{score.ownership:.1f}% owned  "
+                f"confidence {pick.confidence.value}{suffix}"
+            )
+            lines.append(f"     Why: {pick.why}")
+            for warning in pick.warnings:
+                lines.append(f"     ! {warning}")
+    else:
+        lines.append("  No captain candidates passed the availability filter.")
+
     lines += ["", "SELL / AVOID", "-" * 60]
     if board.sells:
         for rec in board.sells:
@@ -491,6 +701,37 @@ def render_text(context: RunContext, board: Board) -> str:
             lines.append(f"  {score.name} ({score.team_short}) - {reason}")
     else:
         lines.append("  None detected.")
+
+    lines += ["", "BEST WILDCARD SQUAD", "-" * 60]
+    squad = board.wildcard
+    if squad is None:
+        lines.append("  Unavailable - no season projections (expected before the season starts).")
+    else:
+        lines.append(
+            f"  {squad.formation}  "
+            f"GBP {squad.total_price:.1f}m spent, GBP {squad.money_left:.1f}m left  "
+            f"{squad.starting_xp:.0f} projected pts from the XI"
+        )
+        lines.append(f"  {board.horizon_note}")
+        lines.append(f"  {squad.optimality_note}")
+        lines.append("")
+        for player in squad.starters:
+            marker = (
+                " (C)"
+                if squad.captain is not None and player.element_id == squad.captain.element_id
+                else ""
+            )
+            lines.append(
+                f"    {player.position:<4}{player.name} ({player.team_short}){marker}"
+                f"  {player.price:.1f}m  GW {player.gameweek_xp:.1f}  "
+                f"season {player.season_xp:.0f}"
+            )
+        lines.append("    -- bench (autosub order) --")
+        for player in squad.bench:
+            lines.append(
+                f"    {player.position:<4}{player.name} ({player.team_short})"
+                f"  {player.price:.1f}m  season {player.season_xp:.0f}"
+            )
 
     lines += ["", "CAVEATS", "-" * 60]
     caveats = context.data_quality.caveats or ["None."]

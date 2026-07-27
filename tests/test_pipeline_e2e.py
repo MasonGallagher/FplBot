@@ -15,6 +15,7 @@ permissions, environment variables, arm64 wheels - which is why both exist.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import httpx
@@ -244,9 +245,11 @@ class TestFullRun:
 
         for heading in (
             "Buy board",
+            "Captain picks",
             "Sell / avoid",
             "Injury-signal watchlist",
             "Returning from injury",
+            "Best wildcard squad",
             "Caveats",
         ):
             assert heading in html
@@ -371,3 +374,56 @@ class TestHardFailures:
         assert outcome.status == "sent"
         html = wired["email"].sent[0]["html"]
         assert "fpl" in html.lower()
+
+
+class TestNewSectionsEndToEnd:
+    """The captaincy and wildcard sections, through the real orchestration.
+
+    The unit tests prove each piece works in isolation. These prove the pipeline
+    actually threads projections into the optimiser and captain picks into the
+    board - the wiring, which is where this kind of feature usually breaks.
+    """
+
+    @respx.mock
+    def test_captain_picks_reach_the_email(self, wired) -> None:
+        stub_endpoints(wired["bootstrap"], wired["fixtures"])
+
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        html = wired["email"].sent[0]["html"]
+
+        assert "Captain picks" in html
+        assert "Captained xP" in html
+
+    @respx.mock
+    def test_a_wildcard_squad_is_built(self, wired) -> None:
+        """The synthetic bootstrap has enough players for a legal squad."""
+        stub_endpoints(wired["bootstrap"], wired["fixtures"])
+
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        html = wired["email"].sent[0]["html"]
+
+        assert "Best wildcard squad" in html
+        assert "in the bank" in html
+
+    @respx.mock
+    def test_the_squad_respects_the_budget_end_to_end(self, wired) -> None:
+        """Guards the constraint through the real data path, not just the unit test."""
+        stub_endpoints(wired["bootstrap"], wired["fixtures"])
+
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        html = wired["email"].sent[0]["html"]
+
+        # The rendered spend line must not exceed the budget.
+        match = re.search(r"GBP ([\d.]+)m spent", html)
+        assert match is not None
+        assert float(match.group(1)) <= 100.0
+
+    @respx.mock
+    def test_the_text_part_carries_both_sections(self, wired) -> None:
+        stub_endpoints(wired["bootstrap"], wired["fixtures"])
+
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        text = wired["email"].sent[0]["text"]
+
+        assert "CAPTAIN PICKS" in text
+        assert "BEST WILDCARD SQUAD" in text

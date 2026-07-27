@@ -35,9 +35,11 @@ evaluate. `explain` below is not decoration - it is the deliverable.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from fplbot.config import ModelTunables
+from fplbot.domain.captaincy import CaptainPick
+from fplbot.domain.squad import WildcardSquad
 from fplbot.models.domain import (
     Confidence,
     FixtureKind,
@@ -185,12 +187,21 @@ def warnings_for(score: PlayerScore) -> list[str]:
 # ---------------------------------------------------------------------------
 @dataclass
 class Board:
-    """The finished output: what to buy, what to avoid, and what to watch."""
+    """The finished output: what to buy, what to avoid, and what to watch.
+
+    `captains` and `wildcard` are optional because both can legitimately be
+    absent - the wildcard optimiser returns nothing in pre-season when there are
+    no projections to optimise against, and rendering must degrade to omitting
+    the section rather than failing.
+    """
 
     buys_by_position: dict[str, list[Recommendation]]
     sells: list[Recommendation]
     watchlist: list[PlayerScore]
     returning: list[tuple[PlayerScore, str]]
+    captains: list[CaptainPick] = field(default_factory=list)
+    wildcard: WildcardSquad | None = None
+    horizon_note: str = ""
 
     @property
     def all_buys(self) -> list[Recommendation]:
