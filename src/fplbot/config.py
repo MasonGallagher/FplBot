@@ -114,6 +114,103 @@ class ModelTunables:
     ceiling_percentile: float = 90.0
     floor_percentile: float = 10.0
 
+    # --- Captaincy ---------------------------------------------------------
+    # Captaincy is NOT the same decision as a transfer, and using the transfer
+    # objective for it would be wrong in a specific direction.
+    #
+    # The armband doubles a player's score, which amplifies the mean AND the
+    # variance. Two consequences pull in opposite directions:
+    #
+    #   * The tail matters more. A captain haul is what wins a gameweek outright,
+    #     so the ceiling is worth more here than in a transfer decision.
+    #   * The floor matters far more. A captain blank is a *double* zero and is
+    #     the single most costly outcome available in a gameweek. Nothing in a
+    #     transfer decision is as punishing.
+    #
+    # And ownership is penalised much more gently than for transfers. The
+    # template captain is usually the template captain because he is genuinely
+    # the best option, and captaincy differentials lose rank far faster than they
+    # gain it. lambda is roughly a third of the transfer value.
+    captain_ceiling_weight: float = 0.35
+    captain_ownership_lambda: float = 0.18
+
+    # Downside is penalised through TWO terms, and both are needed.
+    #
+    # `captain_downside_weight` penalises the spread between the mean and the
+    # P10 floor - how far a bad week falls below expectation. This is the term
+    # that does the real work, because it scales with the size of the downside.
+    # A shortfall-only penalty is bounded by the target below (at most ~0.9
+    # points) while the ceiling bonus is unbounded, so on its own it could never
+    # actually punish volatility: a 50/50 of 0 and 12 would out-rank a certain 6
+    # at identical mean, which is precisely backwards for the armband.
+    #
+    # `captain_floor_weight` then penalises the shortfall below an absolute
+    # floor target - the distinct "he might return nothing at all" risk, which is
+    # worse than a merely wide distribution.
+    #
+    # Together these keep a genuine premium (high mean, high ceiling, some
+    # variance) comfortably ahead of a safe mid-price option, while refusing to
+    # rate a coin flip above a certainty.
+    captain_downside_weight: float = 0.45
+    captain_floor_weight: float = 0.45
+    # Below this expected floor a captaincy pick carries real blank risk.
+    # Roughly "he at least played and did something".
+    captain_floor_target: float = 2.0
+    captain_picks: int = 5
+    # Ownership below which a captain pick is called out as a differential.
+    captain_differential_ownership: float = 15.0
+
+    # --- Season-horizon projection (used by the wildcard optimiser) --------
+    # Per-gameweek decay applied when projecting expected points to the end of
+    # the season.
+    #
+    # This is deliberate and it is not merely conservatism. An undiscounted
+    # 38-gameweek sum lets the optimiser build a squad around fixtures five
+    # months away, and those fixtures will not survive contact with reality:
+    # injuries, form, rotation, managerial changes, cup progression and
+    # rescheduling all intervene. Weighting the near term more heavily produces a
+    # squad that is actually good *now* and merely plausible later, which is the
+    # right trade for something you act on this week.
+    #
+    # 0.985 per gameweek means GW+10 carries ~86% weight and GW+25 ~69%.
+    # Set to 1.0 for a true undiscounted season sum.
+    horizon_decay_per_gameweek: float = 0.985
+    # Cap the projection horizon. Beyond this the numbers are noise dressed as
+    # precision. None means "to the end of the season".
+    horizon_max_gameweeks: int | None = None
+
+    # --- Wildcard squad optimiser ------------------------------------------
+    # FPL squad rules. Read from game_config at runtime where possible; these are
+    # the fallbacks and the shape the optimiser is built around.
+    wildcard_budget_tenths: int = 1000  # GBP 100.0m, in FPL's tenths-of-a-million
+    squad_composition: dict[str, int] = field(
+        default_factory=lambda: {"GKP": 2, "DEF": 5, "MID": 5, "FWD": 3}
+    )
+    max_players_per_club: int = 3
+
+    # A squad is scored on its best valid starting XI, not on all fifteen. This
+    # matters enormously: optimising all fifteen equally spends real money on
+    # bench players who will almost never score. The bench still has *some*
+    # value - injuries, rotation, autosubs - so it is weighted lightly rather
+    # than at zero, which stops the optimiser filling the bench with players who
+    # literally cannot play.
+    bench_weight: float = 0.12
+    # Formation limits for a valid starting XI (1 GKP is implied).
+    formation_limits: dict[str, tuple[int, int]] = field(
+        default_factory=lambda: {"GKP": (1, 1), "DEF": (3, 5), "MID": (2, 5), "FWD": (1, 3)}
+    )
+
+    # Local-search effort. The FPL squad problem is a multi-dimensional knapsack
+    # and therefore NP-hard, but at this size a pruned greedy seed plus swap
+    # search lands on or very near the optimum. More restarts cost milliseconds.
+    optimiser_restarts: int = 6
+    optimiser_max_passes: int = 40
+    # Candidates kept per position after dominance pruning. A player who is more
+    # expensive AND worse than another in the same position can never appear in
+    # an optimal squad, so discarding them costs nothing and shrinks the search
+    # space by roughly an order of magnitude.
+    optimiser_candidates_per_position: int = 45
+
     # --- Attacking shrinkage (SPEC 5.2) ------------------------------------
     # Empirical-Bayes shrinkage expressed in "equivalent minutes": a player with
     # 90 minutes and 1.0 xG is not a 1.0 xG/90 player. Below roughly 450 minutes

@@ -35,11 +35,11 @@ import numpy as np
 
 from fplbot.config import HARD_STALENESS_CEILING_SECONDS, TUNABLES, get_settings
 from fplbot.domain import availability as availability_domain
+from fplbot.domain import captaincy, horizon, invariants, ranking, scoring, squad, teams
 from fplbot.domain import deadline as deadline_domain
 from fplbot.domain import fixtures as fixtures_domain
-from fplbot.domain import invariants, ranking, scoring, teams
 from fplbot.domain.identity import PlayerResolver
-from fplbot.domain.minutes import estimate_minutes
+from fplbot.domain.minutes import MinutesDistribution, estimate_minutes
 from fplbot.http import HttpClient
 from fplbot.models.domain import (
     AvailabilitySignal,
@@ -264,20 +264,40 @@ def _produce_and_send(
     scoring_context = _build_scoring_context(
         bootstrap, run_context, understat_by_element, odds_result.data, element_types
     )
-    scores = _score_all(bootstrap, team_gameweeks, signals, scoring_context, lineups.data)
+    scores, minutes_by_element = _score_all(
+        bootstrap, team_gameweeks, signals, scoring_context, lineups.data
+    )
 
-    # -- 11. Rank ----------------------------------------------------------
+    # -- 11. Project the rest of the season --------------------------------
+    # One extra Monte Carlo pass against a synthetic neutral fixture, multiplied
+    # by each team's remaining fixture load. This is what the wildcard optimiser
+    # maximises; the gameweek scores above are no use to it, because a wildcard
+    # is a decision about the next several months rather than the next Saturday.
+    projections = _project_season(
+        bootstrap, all_fixtures, minutes_by_element, signals, scoring_context, run_context
+    )
+
+    # -- 12. Rank ----------------------------------------------------------
+    current_event = next((e for e in bootstrap.events if e.id == run_context.gameweek), None)
+
     board = ranking.Board(
         buys_by_position=ranking.build_buy_board(scores, TUNABLES),
         sells=ranking.build_sell_list(scores, TUNABLES),
         watchlist=ranking.build_watchlist(scores),
         returning=_returning_players(scores),
+        captains=captaincy.build_captain_picks(
+            scores,
+            TUNABLES,
+            most_captained_element=current_event.most_captained if current_event else None,
+        ),
+        wildcard=_build_wildcard(scores, projections, run_context),
+        horizon_note=horizon.summarise_horizon(projections, TUNABLES),
     )
 
-    # -- 12. Benchmark against FPL's own ep_next ---------------------------
+    # -- 13. Benchmark against FPL's own ep_next ---------------------------
     _log_benchmark(scores)
 
-    # -- 13. Render and send -----------------------------------------------
+    # -- 14. Render and send -----------------------------------------------
     html_body = render.render_html(run_context, board)
     text_body = render.render_text(run_context, board)
 
@@ -653,10 +673,17 @@ def _score_all(
     signals: dict[int, AvailabilitySignal],
     scoring_context: scoring.ScoringContext,
     lineups: ffs.LineupData | None,
-) -> list[PlayerScore]:
-    """Score every transactable player."""
+) -> tuple[list[PlayerScore], dict[int, MinutesDistribution]]:
+    """Score every transactable player.
+
+    Also returns the minutes distributions, because the season-horizon
+    projection needs exactly the same ones. Recomputing them there would be
+    wasteful, and - worse - would risk the two drifting apart if the minutes
+    model ever gains an input that only one caller passes.
+    """
     teams_by_id = bootstrap.teams_by_id()
     scores: list[PlayerScore] = []
+    minutes_by_element: dict[int, MinutesDistribution] = {}
 
     for element in bootstrap.elements:
         # `can_transact` is FPL's own answer to "may this player be bought", and
@@ -681,6 +708,7 @@ def _score_all(
             predicted_to_start=predicted,
             games_played=scoring_context.team_games_played.get(element.team, 0),
         )
+        minutes_by_element[element.id] = minutes_dist
 
         opponent_names = [
             f"{teams_by_id[f.opponent_id].short_name}{'(H)' if f.is_home else '(A)'}"
@@ -701,7 +729,95 @@ def _score_all(
         )
 
     logger.info("Scored players", extra={"count": len(scores)})
-    return scores
+    return scores, minutes_by_element
+
+
+def _project_season(
+    bootstrap: Bootstrap,
+    all_fixtures: list,
+    minutes_by_element: dict[int, MinutesDistribution],
+    signals: dict[int, AvailabilitySignal],
+    scoring_context: scoring.ScoringContext,
+    run_context: RunContext,
+) -> dict[int, horizon.SeasonProjection]:
+    """Project every player's remaining season.
+
+    Uses the same minutes distributions and scoring context as the gameweek
+    pass, so the two views of a player cannot disagree about who he is - only
+    about which fixtures he faces.
+    """
+    fixture_loads = horizon.build_fixture_loads(
+        all_fixtures,
+        [team.id for team in bootstrap.teams],
+        run_context.gameweek,
+        max_gameweeks=TUNABLES.horizon_max_gameweeks,
+    )
+
+    return horizon.project_all(
+        [element for element in bootstrap.elements if element.is_transactable],
+        minutes_by_element,
+        signals,
+        fixture_loads,
+        scoring_context,
+        TUNABLES,
+        run_context.gameweek,
+    )
+
+
+def _build_wildcard(
+    scores: list[PlayerScore],
+    projections: dict[int, horizon.SeasonProjection],
+    run_context: RunContext,
+) -> squad.WildcardSquad | None:
+    """Assemble candidates and run the wildcard optimiser.
+
+    Availability filtering happens here rather than inside the optimiser, which
+    keeps the optimiser a pure combinatorial routine with no opinions about
+    football. A player carrying serious injury risk is excluded outright: a
+    wildcard is a full rebuild and there is no reason to spend any of the budget
+    on someone who may not play.
+    """
+    if not projections:
+        run_context.data_quality.add_caveat(
+            "No season projections available, so no wildcard squad was built. "
+            "This is expected before the season starts."
+        )
+        return None
+
+    candidates = [
+        squad.Candidate(
+            element_id=score.element_id,
+            name=score.name,
+            position=score.position,
+            team_id=score.team_id,
+            team_short=score.team_short,
+            price_tenths=round(score.price * 10),
+            season_xp=projections[score.element_id].season_xp,
+            gameweek_xp=score.mean,
+            ownership=score.ownership,
+            availability_risk=score.availability.risk,
+        )
+        for score in scores
+        if score.element_id in projections and score.availability.risk < 0.5
+    ]
+
+    if len(candidates) < 15:
+        run_context.data_quality.add_caveat(
+            f"Only {len(candidates)} players were eligible for the wildcard optimiser, "
+            "which is too few to build a legal squad."
+        )
+        return None
+
+    # Seeded from the gameweek so the same run reproduces the same squad. A
+    # wildcard draft that changed every hour for no reason would be impossible
+    # to trust or to argue with.
+    result = squad.optimise_squad(candidates, TUNABLES, seed=run_context.gameweek)
+
+    if result is None:
+        run_context.data_quality.add_caveat(
+            "The wildcard optimiser could not find a legal squad within budget."
+        )
+    return result
 
 
 def _returning_players(scores: list[PlayerScore]) -> list[tuple[PlayerScore, str]]:

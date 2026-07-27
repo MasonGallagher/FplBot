@@ -406,3 +406,136 @@ is ever opened.
 
 **Cost.** Integration coverage has to come from the post-deploy smoke test
 instead, which is where it belongs anyway.
+
+---
+
+## ADR-018: A wildcard optimiser, despite ADR-009
+
+**Status:** accepted — **and it needs reconciling with ADR-009**
+
+**Context.** The email now includes a "best wildcard squad" section: the highest
+projected 15 buildable for GBP 100.0m. That is squad construction, and
+[ADR-009](#adr-009-no-squad-state-in-v1) says we do not do squad construction.
+
+**Decision.** Build it anyway, because ADR-009's objection does not apply here.
+
+**Why.** It is worth being precise about what ADR-009 actually rested on. The
+objection was **squad state**, not optimisation. A *transfer* optimiser has to
+know your current fifteen, your bank and your free transfers, and obtaining that
+requires either FPL authentication (out of scope, and the endpoint no longer
+exists) or a hand-maintained squad file that goes stale silently and produces
+confidently wrong advice. The risk was never the ILP; it was the stale input.
+
+A wildcard draft has no squad state **by definition**. A wildcard discards your
+existing team and rebuilds from scratch against a fixed budget. There is nothing
+about you to know, so there is nothing to go stale. It is, in fact, the one
+squad-construction problem that is fully determined by public data.
+
+ADR-009 stands unchanged for transfers. Its scope is narrowed to what it was
+always really about.
+
+**Cost.** A genuinely new capability to maintain, and a knapsack solver to own
+(see ADR-019). The optimiser is pure and lives in `domain/`, so it is testable
+without any of the I/O machinery.
+
+---
+
+## ADR-019: A hand-rolled knapsack solver, not an ILP library
+
+**Status:** accepted
+
+**Context.** Choosing 15 players (2/5/5/3) under a GBP 100.0m budget with at most
+3 per club, maximising projected points, is a multi-dimensional knapsack and is
+NP-hard in general.
+
+**Decision.** Dominance pruning, a cheapest-feasible seed, steepest-ascent local
+search over single swaps, and random restarts. No PuLP, no OR-Tools, no scipy.
+
+**Why.** The same 250 MB constraint that drove [ADR-003](#adr-003-devigging-implemented-in-house-not-via-penaltyblog).
+PuLP bundles a CBC binary; OR-Tools is well over 100 MB. Neither fits alongside
+numpy in a Lambda layer.
+
+And the problem does not need one. After dominance pruning - a player who is more
+expensive *and* worse than another in the same position can never appear in an
+optimal squad, so discarding them is provably free - the search space is small
+enough that local search converges in milliseconds. Six independent restarts
+agreeing to within half a point is strong practical evidence of optimality.
+
+**Cost.** No optimality *proof*. We mitigate by reporting the spread across
+restarts in the email itself (`optimality_note`), so the reader is told whether
+the searches converged rather than being asked to assume it. If they diverge, the
+text says "very good rather than provably optimal", which is honest.
+
+---
+
+## ADR-020: Captaincy has its own objective
+
+**Status:** accepted
+
+**Context.** The email gained a captain-picks section. The obvious implementation
+is to reuse the rank-attacking objective from `ranking.py` and take the top five.
+
+**Decision.** A separate objective:
+
+```
+2*mean + w_ceiling*ceiling - w_downside*(mean - floor)
+       - w_floor*max(0, target - floor) - lambda_c*(ownership * 2*mean)
+```
+
+with `lambda_c` roughly one third of the transfer ownership penalty.
+
+**Why.** Reusing the transfer objective would be wrong in a specific direction:
+it would push differentials at exactly the decision where differentials are most
+punishing.
+
+The armband doubles the mean and the variance together. The floor therefore
+matters far more than it does for a transfer - a captain blank is a *double*
+zero, the single most costly outcome in a gameweek - while ownership matters far
+less, because the template captain is usually the template captain on merit and a
+captaincy differential loses ground faster than it gains it.
+
+**A bug this caught during implementation.** The first version used only a
+*shortfall* penalty, `max(0, target - floor)`. That penalty is bounded by
+`captain_floor_target` at about 0.9 points, while the ceiling bonus is unbounded.
+The objective therefore could not punish volatility at all: a 50/50 of 0 and 12
+out-ranked a certain 6 at identical mean. A test asserted the documented
+behaviour, failed, and the model was corrected rather than the test. The
+`w_downside * (mean - floor)` term is what actually does the work; the shortfall
+term now handles only the distinct "might return nothing at all" case.
+
+**Cost.** A second objective to keep calibrated. Both live in `ModelTunables`
+and both are placeholders pending a fit, exactly as SPEC section 5.5 requires.
+
+---
+
+## ADR-021: Season projection separates player quality from fixture load
+
+**Status:** accepted
+
+**Context.** The wildcard optimiser needs expected points to the end of the
+season. The gameweek scorer answers a different question.
+
+**Decision.** One extra Monte Carlo pass against a synthetic *neutral* fixture
+gives a per-fixture expectation per player. Multiply that by each team's
+remaining fixture load - fixtures per gameweek, weighted by FPL difficulty - and
+sum with a per-gameweek decay.
+
+**Why.** Running the full Monte Carlo 38 times would be slow (91 million draws)
+and, more importantly, dishonest: it models a *specific* opponent and clean-sheet
+probability, and none of that detail exists for gameweek 31. Applying that
+machinery to a fixture we know almost nothing about produces a number with five
+significant figures and one of information.
+
+Separating the two keeps each factor at its own honest precision, and matches how
+a human reasons about it: "he is good, and his fixtures turn in December".
+
+**The decay is not merely conservatism.** Undiscounted, the optimiser builds a
+squad around a team's superb run in March, and that run will not survive contact
+with injuries, form, rotation, managerial changes and rescheduling. Weighting the
+near term produces a squad that is genuinely good now and merely plausible later,
+which is the right trade for a decision acted on this week. The default is 1.5%
+per gameweek; set `horizon_decay_per_gameweek` to 1.0 for a true undiscounted
+sum, and the email states which was used either way.
+
+**Cost.** The projection is coarser than the gameweek model. That is the point,
+and the email says so rather than implying a precision it does not have.

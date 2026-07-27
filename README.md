@@ -118,6 +118,30 @@ comes from a haul nobody else owned, not from a steady six.
 Every recommendation therefore reports **mean, floor (P10), ceiling (P90) and
 ownership**, not just a single number.
 
+### Captaincy uses a different objective, deliberately
+
+Reusing the transfer objective for the armband would be wrong in a specific and
+costly direction. Captaincy doubles the mean *and* the variance, so:
+
+- the **floor matters far more** - a captain blank is a *double* zero, the worst
+  outcome available in a gameweek;
+- **ownership is penalised far more gently** - the template captain is usually
+  the template captain because he is genuinely the best option, and captaincy
+  differentials lose ground faster than they gain it.
+
+So the captain section ranks on its own objective, with two downside terms and
+roughly a third of the transfer ownership penalty. [docs/MODEL.md](docs/MODEL.md)
+has the full derivation.
+
+### The wildcard squad optimises the starting XI, not all fifteen
+
+Only eleven players score. A squad optimised on all fifteen equally spends real
+money on a fifth defender who never starts, which is why every serious wildcard
+draft loads the XI and fills the bench with cheap bodies. The optimiser scores a
+squad on its **best legal starting XI** plus a light weight on the bench - light
+rather than zero, because at exactly zero it happily benches players who cannot
+play at all.
+
 ### What it deliberately does not do
 
 - **No FPL authentication.** None. `users.premierleague.com` no longer resolves;
@@ -125,25 +149,37 @@ ownership**, not just a single number.
 - **No knowledge of your squad.** The bot does not know your fifteen players,
   your bank or your free transfers, so it produces *candidates*, not paired
   swaps. This is a design decision, not a gap - see
-  [ADR-009](docs/DECISIONS.md#adr-009-no-squad-state-in-v1). A squad-aware
+  [ADR-009](docs/DECISIONS.md#adr-009-no-squad-state-in-v1). A transfer
   optimiser is a possible v2 and there is a clean seam for it.
+
+  Two consequences worth knowing. The captain picks are drawn from the whole
+  player pool, so read them as "who is worth the armband this week" - **you can
+  only captain someone you already own**. And the wildcard squad is exempt from
+  this limitation entirely, because a wildcard discards your existing team and
+  rebuilds from scratch against a fixed budget: there is no squad state to know.
+  See [ADR-018](docs/DECISIONS.md).
 
 ---
 
 ## The email
 
-Six sections, in this order:
+Eight sections, in this order:
 
 1. **Header** - gameweek, deadline, hours remaining, **phase**, and a
    data-quality line naming any degraded source.
 2. **Buy board** - ranked within each position, each with expected points,
    ceiling/floor, price, ownership, availability risk, a **confidence**, a
    one-line **"why"** and a **runner-up**.
-3. **Sell / avoid** - with the evidence that triggered each entry.
-4. **Injury-signal watchlist** - transfer-flow anomalies not yet reflected in
+3. **Captain picks** - the top five for the armband, with *doubled* expected
+   points, doubled floor and ceiling, and the probability of a 20+ haul. Ranked
+   on a captaincy-specific objective, not the transfer one - see below.
+4. **Sell / avoid** - with the evidence that triggered each entry.
+5. **Injury-signal watchlist** - transfer-flow anomalies not yet reflected in
    FPL's own `news`, with the z-score and the cross-validation state.
-5. **Returning from injury** - the buy-low window, before the price moves.
-6. **Caveats** - unresolved assessments, stale sources, unmatched players.
+6. **Returning from injury** - the buy-low window, before the price moves.
+7. **Best wildcard squad** - the highest-projected legal 15 buildable for
+   GBP 100.0m, optimised on points from now to the end of the season.
+8. **Caveats** - unresolved assessments, stale sources, unmatched players.
 
 The guiding principle, from the spec: **every recommendation must be legible
 enough to argue with.** You are competing against this bot; a pick you cannot

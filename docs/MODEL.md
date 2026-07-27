@@ -331,3 +331,135 @@ and the overall average.
 **A model that cannot beat `ep_next` is not worth shipping.** The pipeline logs
 the Spearman correlation against `ep_next` on every run, so drift is visible over
 a season rather than discovered in a post-mortem.
+
+---
+
+## 7. Captaincy
+
+The armband is a different decision from a transfer, and using the transfer
+objective for it would be wrong in a specific, costly direction.
+
+Captaincy doubles a player's score, which amplifies the mean and the variance
+together. Three consequences:
+
+1. **The mean dominates.** Doubling makes raw expectation matter roughly twice as
+   much as in any other decision.
+2. **The floor matters far more.** A captain blank is a *double* zero and is the
+   single most costly outcome available in a gameweek. Nothing in a transfer
+   decision punishes you like it.
+3. **Ownership should be penalised much more gently.** The template captain is
+   usually the template captain because he is genuinely the best option. A
+   captaincy differential is a high-variance rank play that loses ground faster
+   than it gains it - when the template hauls and yours blanks, you drop hard,
+   and that happens more often than the reverse.
+
+So:
+
+```
+captain_score = 2*mean
+              + w_ceiling * ceiling
+              - w_downside * (mean - floor)
+              - w_floor    * max(0, target - floor)
+              - lambda_c   * (ownership x 2*mean)
+```
+
+with `lambda_c = 0.18`, about a third of the transfer value.
+
+### Why there are two downside terms
+
+The first implementation had only the shortfall term, `max(0, target - floor)`.
+That penalty is **bounded** by `captain_floor_target` at roughly 0.9 points,
+while the ceiling bonus is **unbounded**. The objective therefore could not
+punish volatility at all - a 50/50 of 0 and 12 out-ranked a certain 6 at
+identical mean, which is precisely backwards for the armband.
+
+The `w_downside * (mean - floor)` term scales with the size of the downside and
+is what actually does the work. The shortfall term now handles only the distinct
+absolute risk of returning nothing at all.
+
+Between them, a genuine premium - high mean, high ceiling, real variance - still
+comfortably beats a safe mid-price option, because the doubled mean dominates.
+What they rule out is treating a coin flip as equivalent to a certainty.
+
+### Filters, and a caveat we state rather than hide
+
+Hard filters are stricter than the buy board's, because the downside is doubled:
+blanks excluded, and availability risk at or above **0.5** rather than 0.95.
+
+The bot does not know your squad, so picks are drawn from the whole player pool.
+**You can only captain someone you already own.** The section is best read as
+"who is worth the armband this week", and the email says exactly that.
+
+---
+
+## 8. The wildcard squad
+
+The best legal 15 buildable for GBP 100.0m, maximising projected points from now
+to the end of the season.
+
+### Projecting the season
+
+The gameweek scorer answers "what will he score this Saturday". The optimiser
+needs "what will he score between now and May", and running the full Monte Carlo
+38 times would be both slow (91 million draws) and dishonest - it models a
+specific opponent and clean-sheet probability, and none of that exists for
+gameweek 31.
+
+Instead we separate what we know from what we do not:
+
+1. **A neutral-fixture xP per player**, from one extra Monte Carlo pass against a
+   synthetic average fixture. This captures everything player-specific - minutes,
+   shrunk xG, set pieces, DefCon, availability - with no fixture noise.
+2. **A fixture load per gameweek**, which is genuinely knowable: how many times
+   does this team play, and how hard is each one? Blanks are zero, doubles are
+   two, difficulty scales each.
+
+Season xP is the product, summed with a per-gameweek decay of 1.5%. The decay is
+deliberate: undiscounted, the optimiser builds a squad around fixtures five
+months away that will not survive contact with injuries, form and rescheduling.
+The email states the assumption rather than burying it.
+
+### The constraints
+
+```
+15 players: 2 GKP, 5 DEF, 5 MID, 3 FWD
+total price <= 1000 (FPL's tenths of a million)
+at most 3 players per club
+```
+
+### Scored on the starting XI, not all fifteen
+
+This is what separates a useful answer from a naive one. Only eleven players
+score. A squad optimised on all fifteen equally spends real money on a fifth
+defender who never starts, which is why every serious wildcard draft loads the XI
+and fills the bench with the cheapest legal bodies.
+
+So a squad's value is its **best valid starting XI** plus a light weight on the
+bench (0.12). Not zero: injuries, rotation and autosubs mean the bench
+occasionally scores, and at exactly zero the optimiser fills it with players who
+cannot play at all - which is both wrong and obviously silly when you read it.
+
+The best XI is computed **exactly**, by enumerating every legal formation (there
+are only a handful) and taking the top players per position within each.
+
+### Solving it
+
+A multi-dimensional knapsack, NP-hard in general, solved without a solver
+dependency:
+
+1. **Dominance pruning.** A player more expensive *and* worse than another in the
+   same position can never be in an optimal squad. Provably free to discard, and
+   it shrinks the space by roughly an order of magnitude. The cheap end is
+   exempted, because bench fodder is chosen for price rather than points and a
+   pure dominance filter would leave no affordable way to fill the bench.
+2. **A cheapest-feasible seed**, so we start inside the budget and every later
+   step is an improvement from a feasible point. Seeding greedily by value
+   typically overspends, and repairing an infeasible squad is far fiddlier than
+   improving a feasible one.
+3. **Steepest-ascent local search** over single swaps.
+4. **Random restarts**, keeping the best.
+
+The email reports the spread across restarts. If they all converge within half a
+point, it says "almost certainly optimal"; if they do not, it says "very good
+rather than provably optimal". That is the honest version of a claim we cannot
+prove.
