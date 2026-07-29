@@ -13,6 +13,7 @@ import pytest
 import respx
 
 from fplbot.config import HttpPolicy
+from fplbot.domain.teams import canonical_team
 from fplbot.http.client import HttpClient, HttpFetchError
 from fplbot.sources.clubelo import _parse_fixture_row
 from fplbot.sources.ffs import PHOTO_CODE_PATTERN, parse_lineups
@@ -108,7 +109,19 @@ INJURY_HTML = """
 <table>
   <tr class="sub-head"><td>Player</td><td>Status</td><td>Condition</td>
       <td>Reason</td><td>Potential Return</td></tr>
-  <tr class="heading" data-team-id="12"><td>Newcastle</td></tr>
+  <tr class="heading" data-team-id="12">
+    <th colspan="7">
+      <div class="injury-table-th">
+        <div class="injury-team">Newcastle</div>
+        <div class="table-actions">
+          <div class="track-team">
+            <a href="/newsroom/injury-alerts?teamid=12" class="track">TRACK</a>
+          </div>
+          <span class="track-count">7</span>
+        </div>
+      </div>
+    </th>
+  </tr>
   <tr class="player-row team_12">
     <td><div class="mob-title">Player</div>
         <a class="track" data-type="player" data-id="4471" data-name="Callum Wilson">
@@ -211,6 +224,44 @@ class TestUkDates:
 # ---------------------------------------------------------------------------
 # Understat
 # ---------------------------------------------------------------------------
+class TestInjuryTableTeamNames:
+    """The heading row carries a "track this team" control alongside the name.
+
+    Taking the row's text gave "NewcastleTRACK7", which resolved to no FPL team
+    for ANY club - so every injury row lost its team hint, and that hint is what
+    stops player matching having to guess between similar names at different
+    clubs. It was invisible in tests because the old fixture used a simplified
+    `<td>Newcastle</td>` rather than the markup the site actually serves.
+    """
+
+    def test_the_team_name_excludes_the_track_control(self) -> None:
+        data = parse_injury_table(INJURY_HTML)
+
+        names = {r.team_name for r in data.records if r.team_name}
+        assert names == {"Newcastle"}
+        assert not any("TRACK" in (n or "") for n in names)
+
+    def test_the_parsed_name_resolves_to_an_fpl_team(self) -> None:
+        """The property that actually matters - a name we cannot resolve is the
+        same as no name at all."""
+        data = parse_injury_table(INJURY_HTML)
+
+        for record in data.records:
+            if record.team_name:
+                assert canonical_team(record.team_name) is not None
+
+    def test_it_falls_back_when_the_name_div_is_absent(self) -> None:
+        """If the markup changes, losing the precise selector should cost
+        accuracy rather than correctness - the generic cleaner still strips the
+        actions block."""
+        html = INJURY_HTML.replace('<div class="injury-team">Newcastle</div>', "Newcastle")
+
+        data = parse_injury_table(html)
+
+        names = {r.team_name for r in data.records if r.team_name}
+        assert not any("TRACK" in (n or "") for n in names), names
+
+
 class TestUnderstat:
     def test_league_data_accepts_understats_javascript_content_type(self) -> None:
         """Understat serves JSON as `text/javascript;charset=utf-8`.
