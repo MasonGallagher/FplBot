@@ -48,8 +48,13 @@ Parameters:
 
   GitHubRepository:
     Type: String
-    Default: MasonGallagher/fplBot
-    Description: owner/repo
+    Default: MasonGallagher/FplBot
+    Description: >
+      owner/repo, and the case matters. GitHub's own API is case-insensitive, so a
+      wrong-cased name looks fine everywhere you would check it - but CodeStar
+      Connections is case-sensitive and the pipeline fails at the Source action
+      with "No Branch [main] found", which reads like a branch problem rather than
+      a spelling one. The repository is FplBot, not fplBot.
 
   GitHubBranch:
     Type: String
@@ -391,6 +396,14 @@ Resources:
             Action: SNS:Publish
             Resource: !Ref NotificationTopic
 
+  # NOTE: on a from-scratch deploy this resource can fail with a bare
+  # "Invalid request provided: AWS::CodeStarNotifications::NotificationRule".
+  # The configuration is not the problem - CodeStar Notifications validates the
+  # target pipeline ARN at creation time and does not always see a pipeline that
+  # CloudFormation created seconds earlier. CloudFormation already orders this
+  # after Pipeline (the !Sub below references it), so DependsOn does not help;
+  # it is an eventual-consistency race, not an ordering bug. Re-running the
+  # deploy fixes it, because by then the pipeline has settled.
   PipelineNotifications:
     Type: AWS::CodeStarNotifications::NotificationRule
     Condition: HasNotificationEmail

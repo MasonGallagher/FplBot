@@ -85,7 +85,7 @@ ALARM_EMAIL="masongallagher90@gmail.com"
 EMAIL_FROM=""
 EMAIL_TO="masongallagher90@gmail.com"
 GITHUB_CONNECTION_ARN=""
-GITHUB_REPOSITORY="MasonGallagher/fplBot"
+GITHUB_REPOSITORY="MasonGallagher/FplBot"
 GITHUB_BRANCH="main"
 NOTIFICATION_EMAIL=""
 
