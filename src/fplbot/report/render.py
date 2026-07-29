@@ -21,9 +21,32 @@ through `esc()` - the data comes from third-party HTML pages, and a player's
 `news` field containing a stray angle bracket should not be able to break the
 layout.
 
-Styling is inline. Email clients strip `<style>` blocks with enthusiasm and
-almost no support for anything modern, so inline attributes on tables is the only
-approach that survives Gmail, Outlook and Apple Mail alike.
+---------------------------------------------------------------------------
+ON THE EMAIL HTML
+---------------------------------------------------------------------------
+Four constraints shape every styling decision here, and none of them are
+preferences:
+
+* **Inline styles on tables.** Email clients strip `<style>` blocks with
+  enthusiasm. The `<style>` block below is progressive enhancement only - it
+  carries the mobile breakpoint and nothing the layout depends on. Every rule
+  that matters is also inline.
+
+* **Tables for layout, not divs.** Outlook renders through Word's HTML engine,
+  which has no meaningful float or flexbox support. A centred card is a table
+  with `align="center"`, and that is simply the way it is done.
+
+* **`color-scheme: light only`.** Gmail and Outlook.com auto-invert dark-mode
+  messages, and their inversion is naive: it flips backgrounds but mangles the
+  subtle greys this report leans on for hierarchy, so the muted secondary text
+  ends up nearly the same value as the primary. Pinning to light renders this
+  document identically everywhere, which for a data-dense table is worth more
+  than honouring a theme preference.
+
+* **A preheader.** The hidden span after `<body>` is what the inbox list shows
+  next to the subject. Without one, clients scrape the first visible text and
+  the preview reads as a fragment of the header. It is the second thing read
+  after the subject and the cheapest professional detail available.
 """
 
 from __future__ import annotations
@@ -41,17 +64,34 @@ from fplbot.models.domain import (
 )
 
 # Palette. Muted deliberately - a board full of red and green is unreadable, and
-# colour should mark the exceptions rather than the norm.
+# colour should mark the exceptions rather than the norm. The original keys are
+# retained; the rest extend the same restraint to surfaces and soft fills.
 COLOURS = {
-    "text": "#1a1a1a",
-    "muted": "#666666",
-    "border": "#dddddd",
-    "header_bg": "#f5f5f5",
+    # Original keys.
+    "text": "#0f172a",
+    "muted": "#64748b",
+    "border": "#e2e8f0",
+    "header_bg": "#f8fafc",
     "provisional": "#b45309",  # amber - phase 1
     "confirmed": "#15803d",  # green - phase 2, act on this
     "danger": "#b91c1c",
     "warning": "#a16207",
-    "accent": "#1d4ed8",
+    "accent": "#4f46e5",
+    # Extensions.
+    "body": "#334155",
+    "faint": "#94a3b8",
+    "line_soft": "#eef2f7",
+    "canvas": "#eef1f6",
+    "surface": "#ffffff",
+    "masthead": "#111827",
+    "masthead_muted": "#9ca3af",
+    "accent_soft": "#eef2ff",
+    # The two halves of a spread bar: floor-to-mean, then mean-to-ceiling.
+    "accent_light": "#a5b4fc",
+    "track": "#eef2f7",
+    "confirmed_soft": "#dcfce7",
+    "provisional_soft": "#fef3c7",
+    "danger_soft": "#fee2e2",
 }
 
 CONFIDENCE_COLOUR = {
@@ -67,6 +107,14 @@ POSITION_NAMES = {
     "FWD": "Forwards",
 }
 
+FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif"
+
+# `tabular-nums` keeps decimal points in a column of xP figures vertically
+# aligned. Unsupported clients ignore it, so it costs nothing.
+NUM = f"font-family:{FONT};font-variant-numeric:tabular-nums;"
+
+CARD_WIDTH = 680
+
 
 def esc(value: object) -> str:
     """HTML-escape anything on its way into the document."""
@@ -75,6 +123,73 @@ def esc(value: object) -> str:
 
 def format_deadline(epoch: int) -> str:
     return datetime.fromtimestamp(epoch, tz=UTC).strftime("%a %d %b %Y, %H:%M UTC")
+
+
+# ---------------------------------------------------------------------------
+# Small presentational helpers
+# ---------------------------------------------------------------------------
+def _pill(text: str, *, fg: str, bg: str) -> str:
+    """A rounded badge. Used for TEMPLATE / DIFFERENTIAL / captain markers."""
+    return (
+        f'<span style="display:inline-block;background:{bg};color:{fg};'
+        f"padding:2px 7px;border-radius:10px;font-size:10px;font-weight:700;"
+        f'letter-spacing:0.04em;white-space:nowrap;">{text}</span>'
+    )
+
+
+def _th(label: str, *, align: str = "left", width: str = "", title: str = "") -> str:
+    """A table header cell: small, uppercase, muted - it should recede."""
+    width_rule = f"width:{width};" if width else ""
+    title_attr = f' title="{esc(title)}"' if title else ""
+    return (
+        f'<th{title_attr} style="{width_rule}text-align:{align};padding:0 10px 8px;'
+        f"font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;"
+        f'color:{COLOURS["faint"]};border-bottom:1px solid {COLOURS["border"]};">{label}</th>'
+    )
+
+
+def _table(head: str, body: str) -> str:
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"'
+        f' style="border-collapse:collapse;width:100%;font-family:{FONT};">'
+        f"<thead><tr>{head}</tr></thead><tbody>{body}</tbody></table>"
+    )
+
+
+def _section_heading(title: str) -> str:
+    """Heading plus a short accent rule - an editorial cue that a section starts."""
+    return (
+        f'<h2 style="margin:34px 0 0;font-family:{FONT};font-size:17px;font-weight:700;'
+        f'color:{COLOURS["text"]};letter-spacing:-0.01em;">{esc(title)}</h2>'
+        f'<div style="width:34px;height:3px;background:{COLOURS["accent"]};'
+        f'border-radius:2px;margin:7px 0 14px;"></div>'
+    )
+
+
+def _note(message: str) -> str:
+    """Explanatory copy under a heading."""
+    return (
+        f'<p style="margin:0 0 12px;font-family:{FONT};font-size:13px;line-height:1.55;'
+        f'color:{COLOURS["muted"]};">{message}</p>'
+    )
+
+
+def _empty(message: str) -> str:
+    """The 'nothing here' state. Bordered so it reads as a deliberate answer
+    rather than a section that failed to render."""
+    return (
+        f'<p style="margin:0;padding:14px 16px;font-family:{FONT};font-size:13px;'
+        f'color:{COLOURS["muted"]};background:{COLOURS["header_bg"]};'
+        f'border:1px solid {COLOURS["border"]};border-radius:8px;">{esc(message)}</p>'
+    )
+
+
+def _detail_line(bits: list[str]) -> str:
+    """The stacked 'why / runner-up / warning' block under a player's name."""
+    return (
+        f'<div style="margin-top:5px;font-size:12px;line-height:1.6;'
+        f'color:{COLOURS["muted"]};">{"<br>".join(bits)}</div>'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -87,60 +202,159 @@ def render_html(context: RunContext, board: Board) -> str:
     # squad goes last before the caveats: it is a much rarer decision, and
     # burying it slightly is the honest reflection of how often it applies.
     sections = [
-        _header(context),
         _buy_board(board),
+        # Directly after the board it visualises, while those names are still in
+        # the reader's head. Returns "" when there are no buys, rather than an
+        # empty chart frame.
+        _spread_chart(board),
         _captain_picks(board),
         _sell_list(board),
         _watchlist(board, context),
         _returning(board),
         _wildcard_squad(board),
         _caveats(context.data_quality, context),
-        _footer(context),
     ]
     body = "\n".join(sections)
+
+    return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<meta name="supported-color-schemes" content="light only">
+<title>fplBot GW{context.gameweek} - {esc(context.phase_label)}</title>
+<style>
+  /* Progressive enhancement only - the inline styles carry the layout. */
+  @media only screen and (max-width:620px) {{
+    .fb-pad {{ padding-left:18px !important; padding-right:18px !important; }}
+    .fb-hide-sm {{ display:none !important; }}
+    .fb-h1 {{ font-size:21px !important; }}
+  }}
+  a {{ color:{COLOURS["accent"]}; }}
+</style>
+</head>
+<body style="margin:0;padding:0;background:{COLOURS["canvas"]};
+             font-family:{FONT};color:{COLOURS["body"]};
+             -webkit-font-smoothing:antialiased;">
+{_preheader(context)}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:{COLOURS["canvas"]};width:100%;">
+  <tr><td align="center" style="padding:24px 12px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+           width="{CARD_WIDTH}"
+           style="width:100%;max-width:{CARD_WIDTH}px;background:{COLOURS["surface"]};
+                  border:1px solid {COLOURS["border"]};border-radius:14px;overflow:hidden;">
+      {_masthead(context)}
+      {_status_strip(context)}
+      <tr><td class="fb-pad" style="padding:4px 32px 32px;">{body}</td></tr>
+      {_footer(context)}
+    </table>
+  </td></tr>
+</table>
+</body></html>"""
+
+
+def _preheader(context: RunContext) -> str:
+    """Hidden inbox preview text.
+
+    The trailing entities are the standard whitespace hack: without them the
+    client keeps scraping past the preheader and appends the masthead copy.
+    """
+    marker = "Confirmed" if context.is_confirmed_phase else "Provisional"
+    text = (
+        f"{marker} board for GW{context.gameweek} - "
+        f"{context.hours_to_deadline:.0f}h to the deadline."
+    )
     return (
-        '<!doctype html><html><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        f"<title>fplBot GW{context.gameweek} - {context.phase_label}</title></head>"
-        f'<body style="margin:0;padding:16px;background:#ffffff;'
-        f"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;"
-        f'color:{COLOURS["text"]};line-height:1.5;">'
-        f'<div style="max-width:860px;margin:0 auto;">{body}</div>'
-        "</body></html>"
+        f'<div style="display:none;max-height:0;overflow:hidden;opacity:0;'
+        f'mso-hide:all;font-size:1px;line-height:1px;color:{COLOURS["surface"]};">'
+        f"{esc(text)}" + ("&#847;&zwnj;&nbsp;" * 60) + "</div>"
     )
 
 
-def _header(context: RunContext) -> str:
-    """Section 1. The phase label is the most important thing on the page.
+def _masthead(context: RunContext) -> str:
+    """The dark header band: identity, gameweek, and the deadline countdown.
 
-    Phase 1 output is provisional and must be labelled as such: at T-48h most
-    managers' press conferences have not happened, and over half the injury table
-    is still "Currently Being Assessed". Phase 2 at T-3h is the one to act on.
+    Hours remaining is the single most decision-relevant number in the document,
+    so it is set large and given its own column rather than being buried in a
+    sentence.
+    """
+    hours = context.hours_to_deadline
+    return f"""
+    <tr><td class="fb-pad" style="background:{COLOURS["masthead"]};padding:26px 32px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td style="vertical-align:middle;">
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.16em;
+                        text-transform:uppercase;color:{COLOURS["masthead_muted"]};">
+              fplBot &middot; Season {esc(context.season)}
+            </div>
+            <h1 class="fb-h1" style="margin:9px 0 0;font-size:25px;line-height:1.2;
+                       font-weight:700;color:#ffffff;letter-spacing:-0.02em;">
+              Gameweek {context.gameweek} transfer board
+            </h1>
+          </td>
+          <td class="fb-hide-sm" style="vertical-align:middle;text-align:right;
+                     white-space:nowrap;padding-left:16px;">
+            <div style="{NUM}font-size:30px;font-weight:700;color:#ffffff;line-height:1;">
+              {hours:.1f}h
+            </div>
+            <div style="font-size:10px;font-weight:700;letter-spacing:0.1em;
+                        text-transform:uppercase;color:{COLOURS["masthead_muted"]};
+                        margin-top:5px;">
+              to deadline
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
+    """
+
+
+def _status_strip(context: RunContext) -> str:
+    """Phase banner and data-quality line.
+
+    The T-24h report is provisional and must be labelled as such: some managers'
+    press conferences have not happened yet and part of the injury table is still
+    "Currently Being Assessed". The T-3h report is the one to act on, because by
+    then those pressers have landed.
     """
     is_confirmed = context.is_confirmed_phase
     colour = COLOURS["confirmed"] if is_confirmed else COLOURS["provisional"]
+    soft = COLOURS["confirmed_soft"] if is_confirmed else COLOURS["provisional_soft"]
+    label = "CONFIRMED" if is_confirmed else "PROVISIONAL"
     banner = (
-        "CONFIRMED - this is the report to act on"
+        "team news has landed - this is the report to act on"
         if is_confirmed
-        else "PROVISIONAL - team news is still moving; a confirmed report follows at T-3h"
+        else "team news is still moving; a confirmed report follows at T-3h"
     )
 
     quality = context.data_quality
-    quality_colour = COLOURS["muted"] if not quality.degraded_sources else COLOURS["warning"]
+    degraded = bool(quality.degraded_sources)
+    quality_colour = COLOURS["warning"] if degraded else COLOURS["muted"]
 
     return f"""
-    <h1 style="margin:0 0 4px;font-size:22px;">Gameweek {context.gameweek} transfer board</h1>
-    <p style="margin:0 0 12px;color:{COLOURS["muted"]};font-size:14px;">
-      Deadline {esc(format_deadline(context.deadline_epoch))} &middot;
-      <strong>{context.hours_to_deadline:.1f} hours remaining</strong>
-    </p>
-    <div style="background:{colour};color:#ffffff;padding:10px 14px;border-radius:4px;
-                font-weight:600;font-size:14px;margin-bottom:12px;">
-      {esc(banner)}
-    </div>
-    <p style="margin:0 0 20px;font-size:13px;color:{quality_colour};">
-      <strong>Data quality:</strong> {esc(quality.summary_line())}
-    </p>
+    <tr><td class="fb-pad" style="padding:18px 32px 0;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="background:{soft};border-left:3px solid {colour};border-radius:6px;">
+        <tr><td style="padding:11px 14px;font-size:13px;line-height:1.5;color:{colour};">
+          <strong style="font-weight:700;letter-spacing:0.03em;">{label}</strong>
+          <span style="color:{COLOURS["body"]};"> &mdash; {esc(banner)}</span>
+        </td></tr>
+      </table>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="margin-top:14px;border-top:1px solid {COLOURS["line_soft"]};">
+        <tr>
+          <td style="padding:12px 0 0;font-size:12px;line-height:1.6;color:{COLOURS["muted"]};">
+            <strong style="color:{COLOURS["body"]};">Deadline</strong>
+            {esc(format_deadline(context.deadline_epoch))}
+            <span style="color:{COLOURS["faint"]};"> &middot; </span>
+            <strong style="color:{quality_colour};">Data</strong>
+            <span style="color:{quality_colour};">{esc(quality.summary_line())}</span>
+          </td>
+        </tr>
+      </table>
+    </td></tr>
     """
 
 
@@ -148,51 +362,49 @@ def _buy_board(board: Board) -> str:
     """Section 2. Ranked by position."""
     blocks = [_section_heading("Buy board")]
 
+    any_rows = False
     for position, title in POSITION_NAMES.items():
         recommendations = board.buys_by_position.get(position, [])
         if not recommendations:
             continue
+        any_rows = True
         rows = "\n".join(_buy_row(rec, index + 1) for index, rec in enumerate(recommendations))
+        head = (
+            _th("#", width="22px")
+            + _th("Player")
+            + _th("Price", align="right")
+            + _th("xP", align="right")
+            + _th("Floor / Ceiling", align="right", title="P10 - P90")
+            + _th("Owned", align="right")
+            + _th("Risk", align="right")
+            + _th("Conf.", align="right")
+        )
         blocks.append(
-            f"""
-            <h3 style="margin:18px 0 6px;font-size:15px;">{esc(title)}</h3>
-            <table role="presentation" cellpadding="6" cellspacing="0" width="100%"
-                   style="border-collapse:collapse;font-size:13px;">
-              <thead>
-                <tr style="background:{COLOURS["header_bg"]};text-align:left;">
-                  <th style="width:24px;">#</th>
-                  <th>Player</th>
-                  <th style="text-align:right;">Price</th>
-                  <th style="text-align:right;">xP</th>
-                  <th style="text-align:right;" title="P10 - P90">Floor / Ceiling</th>
-                  <th style="text-align:right;">Owned</th>
-                  <th style="text-align:right;">Risk</th>
-                  <th>Confidence</th>
-                </tr>
-              </thead>
-              <tbody>{rows}</tbody>
-            </table>
-            """
+            f'<h3 style="margin:22px 0 10px;font-size:11px;font-weight:700;'
+            f"letter-spacing:0.09em;text-transform:uppercase;"
+            f'color:{COLOURS["accent"]};">{esc(title)}</h3>{_table(head, rows)}'
         )
 
-    if len(blocks) == 1:
+    if not any_rows:
         blocks.append(_empty("No buy candidates passed the filters this gameweek."))
     return "\n".join(blocks)
 
 
 def _buy_row(rec: Recommendation, index: int) -> str:
     score = rec.score
-    border = f"border-top:1px solid {COLOURS['border']};"
+    cell = (
+        f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
+    )
     confidence_colour = CONFIDENCE_COLOUR[rec.confidence]
 
-    detail_bits = [f'<em style="color:{COLOURS["muted"]};">{esc(rec.why)}</em>']
+    detail_bits = [f'<em style="font-style:normal;">{esc(rec.why)}</em>']
     if rec.runner_up:
         detail_bits.append(
-            f'<span style="color:{COLOURS["muted"]};">Runner-up: {esc(rec.runner_up)}</span>'
+            f'<span style="color:{COLOURS["faint"]};">Runner-up: {esc(rec.runner_up)}</span>'
         )
     for warning in rec.warnings:
         detail_bits.append(
-            f'<span style="color:{COLOURS["warning"]};">&#9888; {esc(warning)}</span>'
+            f'<span style="color:{COLOURS["warning"]};">&#9888;&#65039; {esc(warning)}</span>'
         )
     if score.availability.scout_news_link:
         # FPL hands us the actual club statement behind each injury, keyed to the
@@ -200,35 +412,148 @@ def _buy_row(rec: Recommendation, index: int) -> str:
         # primary source rather than taking our word for it.
         detail_bits.append(
             f'<a href="{esc(score.availability.scout_news_link)}" '
-            f'style="color:{COLOURS["accent"]};">Club statement</a>'
+            f'style="color:{COLOURS["accent"]};text-decoration:none;'
+            f'border-bottom:1px solid {COLOURS["accent_soft"]};">Club statement &rarr;</a>'
         )
 
     fixture_note = ""
     if score.fixture_count >= 2:
-        fixture_note = (
-            f' <span style="color:{COLOURS["confirmed"]};font-weight:600;">'
-            f"DGW x{score.fixture_count}</span>"
+        fixture_note = " " + _pill(
+            f"DGW &times;{score.fixture_count}",
+            fg=COLOURS["confirmed"],
+            bg=COLOURS["confirmed_soft"],
         )
 
     return f"""
-    <tr style="{border}">
-      <td style="vertical-align:top;color:{COLOURS["muted"]};">{index}</td>
-      <td style="vertical-align:top;">
-        <strong>{esc(score.name)}</strong>
-        <span style="color:{COLOURS["muted"]};">({esc(score.team_short)})</span>{fixture_note}
-        <div style="margin-top:3px;font-size:12px;">{"<br>".join(detail_bits)}</div>
+    <tr>
+      <td style="{cell}{NUM}color:{COLOURS["faint"]};font-size:12px;">{index}</td>
+      <td style="{cell}font-size:13px;color:{COLOURS["body"]};">
+        <strong style="color:{COLOURS["text"]};font-size:14px;">{esc(score.name)}</strong>
+        <span style="color:{COLOURS["faint"]};font-size:12px;">
+          {esc(score.team_short)}</span>{fixture_note}
+        {_detail_line(detail_bits)}
       </td>
-      <td style="vertical-align:top;text-align:right;">{score.price:.1f}</td>
-      <td style="vertical-align:top;text-align:right;"><strong>{score.mean:.2f}</strong></td>
-      <td style="vertical-align:top;text-align:right;color:{COLOURS["muted"]};">
-        {score.floor:.1f} / {score.ceiling:.1f}
-      </td>
-      <td style="vertical-align:top;text-align:right;">{score.ownership:.1f}%</td>
-      <td style="vertical-align:top;text-align:right;">{score.availability.risk:.0%}</td>
-      <td style="vertical-align:top;color:{confidence_colour};font-weight:600;">
-        {esc(rec.confidence.value)}
+      <td style="{cell}{NUM}text-align:right;font-size:13px;">{score.price:.1f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:15px;font-weight:700;
+                 color:{COLOURS["text"]};">{score.mean:.2f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:12px;color:{COLOURS["muted"]};
+                 white-space:nowrap;">{score.floor:.1f} &ndash; {score.ceiling:.1f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;">{score.ownership:.1f}%</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;">
+        {score.availability.risk:.0%}</td>
+      <td style="{cell}text-align:right;">
+        <span style="color:{confidence_colour};font-weight:700;font-size:11px;
+                     letter-spacing:0.04em;text-transform:uppercase;">
+          {esc(rec.confidence.value)}</span>
       </td>
     </tr>
+    """
+
+
+# ---------------------------------------------------------------------------
+# The spread chart
+# ---------------------------------------------------------------------------
+# Email cannot run JavaScript, Gmail strips <svg> and refuses `data:` image URIs,
+# and rendering a PNG server-side would mean carrying matplotlib - roughly 50 MB
+# into a layer already at half its 250 MB budget, for one picture. So the chart
+# is built from table cells with percentage widths and background colours, which
+# is the one technique that renders identically in Gmail, Outlook and Apple Mail
+# with no dependency and nothing to block.
+#
+# What it plots is the outcome distribution rather than the mean, because the
+# mean is already a column in the table above it and a bar chart of it would add
+# nothing. SPEC's objective is expected *rank* gain, which makes the spread the
+# decision-relevant quantity: a 6.0 xP floor-heavy midfielder and a 6.0 xP
+# boom-or-bust forward are the same number and completely different bets, and
+# that difference is exactly what this makes visible at a glance.
+CHART_PLAYERS = 8
+BAR_HEIGHT = 9
+
+
+def _spread_chart(board: Board) -> str:
+    """Floor -> mean -> ceiling range bars for the strongest buy candidates."""
+    candidates = [rec for recs in board.buys_by_position.values() for rec in recs]
+    if not candidates:
+        return ""
+
+    top = sorted(candidates, key=lambda rec: rec.score.mean, reverse=True)[:CHART_PLAYERS]
+
+    # One shared scale across every bar - the comparison is the entire point, and
+    # per-row scaling would make a narrow spread look like a wide one.
+    scale = max(rec.score.ceiling for rec in top)
+    if scale <= 0:
+        return ""
+
+    heading = _section_heading("Outcome spread")
+    intro = _note(
+        "The same eight players as above, drawn as the range they actually project into. "
+        f'<span style="color:{COLOURS["accent_light"]};font-weight:700;">Light</span> is '
+        f'floor to mean, <span style="color:{COLOURS["accent"]};font-weight:700;">dark</span> '
+        "is mean to ceiling &ndash; so the shade boundary is the expected return, and a wide "
+        "bar is a volatile one. Two players on the same xP can be entirely different bets, "
+        "and for a rank-gain objective the ceiling is usually the half that matters."
+    )
+    rows = "\n".join(_spread_row(rec, scale) for rec in top)
+    return heading + intro + f'<table role="presentation" cellpadding="0" cellspacing="0"'\
+        f' border="0" width="100%" style="border-collapse:collapse;">{rows}</table>'
+
+
+def _spread_row(rec: Recommendation, scale: float) -> str:
+    score = rec.score
+    floor = max(0.0, score.floor)
+    ceiling = max(floor, score.ceiling)
+    mean = min(max(score.mean, floor), ceiling)
+
+    # Widths as percentages of the shared scale. Cells that would round to zero
+    # are dropped entirely: a 0%-width table cell still occupies a pixel or two
+    # in several clients, which would show as a stray tick of colour at the
+    # origin of every bar.
+    lead = floor / scale * 100
+    lower = (mean - floor) / scale * 100
+    upper = (ceiling - mean) / scale * 100
+    rest = max(0.0, 100 - lead - lower - upper)
+
+    def segment(width: float, colour: str) -> str:
+        if width < 0.5:
+            return ""
+        return (
+            f'<td width="{width:.2f}%" height="{BAR_HEIGHT}" '
+            f'style="width:{width:.2f}%;background:{colour};height:{BAR_HEIGHT}px;'
+            f'font-size:0;line-height:0;">&nbsp;</td>'
+        )
+
+    bar = (
+        segment(lead, COLOURS["track"])
+        + segment(lower, COLOURS["accent_light"])
+        + segment(upper, COLOURS["accent"])
+        + segment(rest, COLOURS["track"])
+    )
+
+    return f"""
+    <tr><td style="padding:0 0 14px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td style="font-size:13px;color:{COLOURS["text"]};padding-bottom:5px;">
+            <strong>{esc(score.name)}</strong>
+            <span style="color:{COLOURS["faint"]};font-size:12px;">
+              {esc(score.team_short)}</span>
+          </td>
+          <td align="right" style="{NUM}font-size:12px;color:{COLOURS["muted"]};
+                     padding-bottom:5px;white-space:nowrap;">
+            {floor:.1f}
+            <span style="color:{COLOURS["faint"]};">&rarr;</span>
+            <strong style="color:{COLOURS["text"]};font-size:13px;">{mean:.1f}</strong>
+            <span style="color:{COLOURS["faint"]};">&rarr;</span>
+            {ceiling:.1f}
+          </td>
+        </tr>
+      </table>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="border-collapse:collapse;table-layout:fixed;background:{COLOURS["track"]};
+                    border-radius:5px;overflow:hidden;">
+        <tr>{bar}</tr>
+      </table>
+    </td></tr>
     """
 
 
@@ -241,87 +566,77 @@ def _captain_picks(board: Board) -> str:
     themselves, and the whole point of the section is the doubling.
     """
     heading = _section_heading("Captain picks")
-    intro = (
-        f'<p style="margin:0 0 8px;font-size:13px;color:{COLOURS["muted"]};">'
+    intro = _note(
         "Ranked on a captaincy-specific objective, not the transfer one: the armband "
         "doubles the mean <em>and</em> the variance, so a weak floor is penalised hard "
         "(a captain blank is a double zero) and ownership is discounted far more gently "
         "than for a transfer. <strong>The bot does not know your squad, so these are the "
-        "players worth having the armband on - you can only captain someone you already "
-        "own.</strong></p>"
+        "players worth having the armband on &ndash; you can only captain someone you "
+        "already own.</strong>"
     )
 
     if not board.captains:
         return heading + intro + _empty("No captain candidates passed the availability filter.")
 
     rows = "\n".join(_captain_row(pick, index + 1) for index, pick in enumerate(board.captains))
-
-    return (
-        heading
-        + intro
-        + f"""
-        <table role="presentation" cellpadding="6" cellspacing="0" width="100%"
-               style="border-collapse:collapse;font-size:13px;">
-          <thead>
-            <tr style="background:{COLOURS["header_bg"]};text-align:left;">
-              <th style="width:24px;">#</th>
-              <th>Player</th>
-              <th style="text-align:right;">Captained xP</th>
-              <th style="text-align:right;" title="P10 - P90, doubled">Floor / Ceiling</th>
-              <th style="text-align:right;" title="P(20+ captained)">Haul</th>
-              <th style="text-align:right;">Owned</th>
-              <th>Confidence</th>
-            </tr>
-          </thead>
-          <tbody>{rows}</tbody>
-        </table>
-        """
+    head = (
+        _th("#", width="22px")
+        + _th("Player")
+        + _th("Captained xP", align="right")
+        + _th("Floor / Ceiling", align="right", title="P10 - P90, doubled")
+        + _th("Haul", align="right", title="P(20+ captained)")
+        + _th("Owned", align="right")
+        + _th("Conf.", align="right")
     )
+    return heading + intro + _table(head, rows)
 
 
 def _captain_row(pick, index: int) -> str:
     score = pick.score
+    cell = (
+        f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
+    )
     confidence_colour = CONFIDENCE_COLOUR[pick.confidence]
 
     badges = ""
     if pick.is_template:
-        badges += (
-            f' <span style="background:{COLOURS["header_bg"]};color:{COLOURS["muted"]};'
-            f'padding:1px 5px;border-radius:3px;font-size:11px;">TEMPLATE</span>'
-        )
+        badges += " " + _pill("TEMPLATE", fg=COLOURS["muted"], bg=COLOURS["header_bg"])
     if pick.is_differential:
-        badges += (
-            f' <span style="background:{COLOURS["accent"]};color:#ffffff;'
-            f'padding:1px 5px;border-radius:3px;font-size:11px;">DIFFERENTIAL</span>'
-        )
+        badges += " " + _pill("DIFFERENTIAL", fg=COLOURS["accent"], bg=COLOURS["accent_soft"])
     if score.fixture_count >= 2:
-        badges += (
-            f' <span style="color:{COLOURS["confirmed"]};font-weight:600;">'
-            f"DGW x{score.fixture_count}</span>"
+        badges += " " + _pill(
+            f"DGW &times;{score.fixture_count}",
+            fg=COLOURS["confirmed"],
+            bg=COLOURS["confirmed_soft"],
         )
 
-    details = [f'<em style="color:{COLOURS["muted"]};">{esc(pick.why)}</em>']
+    details = [f'<em style="font-style:normal;">{esc(pick.why)}</em>']
     for warning in pick.warnings:
-        details.append(f'<span style="color:{COLOURS["warning"]};">&#9888; {esc(warning)}</span>')
+        details.append(
+            f'<span style="color:{COLOURS["warning"]};">&#9888;&#65039; {esc(warning)}</span>'
+        )
 
     return f"""
-    <tr style="border-top:1px solid {COLOURS["border"]};">
-      <td style="vertical-align:top;color:{COLOURS["muted"]};">{index}</td>
-      <td style="vertical-align:top;">
-        <strong>{esc(score.name)}</strong>
-        <span style="color:{COLOURS["muted"]};">({esc(score.team_short)})</span>{badges}
-        <div style="margin-top:3px;font-size:12px;">{"<br>".join(details)}</div>
+    <tr>
+      <td style="{cell}{NUM}color:{COLOURS["faint"]};font-size:12px;">{index}</td>
+      <td style="{cell}font-size:13px;color:{COLOURS["body"]};">
+        <strong style="color:{COLOURS["text"]};font-size:14px;">{esc(score.name)}</strong>
+        <span style="color:{COLOURS["faint"]};font-size:12px;">
+          {esc(score.team_short)}</span>{badges}
+        {_detail_line(details)}
       </td>
-      <td style="vertical-align:top;text-align:right;">
-        <strong>{pick.expected_points:.2f}</strong>
-      </td>
-      <td style="vertical-align:top;text-align:right;color:{COLOURS["muted"]};">
-        {pick.captained_floor:.1f} / {pick.captained_ceiling:.1f}
-      </td>
-      <td style="vertical-align:top;text-align:right;">{pick.haul_probability:.0%}</td>
-      <td style="vertical-align:top;text-align:right;">{score.ownership:.1f}%</td>
-      <td style="vertical-align:top;color:{confidence_colour};font-weight:600;">
-        {esc(pick.confidence.value)}
+      <td style="{cell}{NUM}text-align:right;font-size:15px;font-weight:700;
+                 color:{COLOURS["text"]};">{pick.expected_points:.2f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:12px;color:{COLOURS["muted"]};
+                 white-space:nowrap;">
+        {pick.captained_floor:.1f} &ndash; {pick.captained_ceiling:.1f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;">
+        {pick.haul_probability:.0%}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;">{score.ownership:.1f}%</td>
+      <td style="{cell}text-align:right;">
+        <span style="color:{confidence_colour};font-weight:700;font-size:11px;
+                     letter-spacing:0.04em;text-transform:uppercase;">
+          {esc(pick.confidence.value)}</span>
       </td>
     </tr>
     """
@@ -338,15 +653,21 @@ def _wildcard_squad(board: Board) -> str:
             "(expected before the season starts)."
         )
 
-    intro = (
-        f'<p style="margin:0 0 4px;font-size:13px;">'
-        f"<strong>{esc(squad.formation)}</strong> &middot; "
-        f"GBP {squad.total_price:.1f}m spent, GBP {squad.money_left:.1f}m in the bank "
-        f"&middot; <strong>{squad.starting_xp:.0f} projected points</strong> from the XI "
-        f"to the end of the season</p>"
-        f'<p style="margin:0 0 8px;font-size:12px;color:{COLOURS["muted"]};">'
-        f"{esc(board.horizon_note)} {esc(squad.optimality_note)}</p>"
-    )
+    # The three headline numbers get a strip of their own. Formation, spend and
+    # projected points are what the reader compares against their own squad.
+    summary = f"""
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+           style="background:{COLOURS["header_bg"]};border:1px solid {COLOURS["border"]};
+                  border-radius:8px;margin-bottom:14px;">
+      <tr>
+        {_metric("Formation", esc(squad.formation))}
+        {_metric("Spent", f"&pound;{squad.total_price:.1f}m")}
+        {_metric("In the bank", f"&pound;{squad.money_left:.1f}m")}
+        {_metric("Projected XI", f"{squad.starting_xp:.0f} pts", emphasis=True)}
+      </tr>
+    </table>
+    {_note(esc(board.horizon_note) + " " + esc(squad.optimality_note))}
+    """
 
     starters = "\n".join(
         _squad_row(
@@ -356,90 +677,96 @@ def _wildcard_squad(board: Board) -> str:
         for player in squad.starters
     )
     bench = "\n".join(_squad_row(player, is_captain=False) for player in squad.bench)
+    divider = (
+        f'<tr><td colspan="5" style="padding:16px 10px 8px;font-size:10px;'
+        f"font-weight:700;color:{COLOURS['faint']};text-transform:uppercase;"
+        f'letter-spacing:0.09em;">Bench (in autosub order)</td></tr>'
+    )
+    head = (
+        _th("Player")
+        + _th("Price", align="right")
+        + _th("This GW", align="right")
+        + _th("Season xP", align="right")
+        + _th("Owned", align="right")
+    )
 
     return (
         heading
-        + intro
-        + f"""
-        <table role="presentation" cellpadding="5" cellspacing="0" width="100%"
-               style="border-collapse:collapse;font-size:13px;">
-          <thead>
-            <tr style="background:{COLOURS["header_bg"]};text-align:left;">
-              <th>Player</th>
-              <th style="text-align:right;">Price</th>
-              <th style="text-align:right;">This GW</th>
-              <th style="text-align:right;">Season xP</th>
-              <th style="text-align:right;">Owned</th>
-            </tr>
-          </thead>
-          <tbody>
-            {starters}
-            <tr><td colspan="5" style="padding-top:10px;font-size:11px;
-                 color:{COLOURS["muted"]};text-transform:uppercase;
-                 letter-spacing:0.05em;">Bench (in autosub order)</td></tr>
-            {bench}
-          </tbody>
-        </table>
-        <p style="margin:8px 0 0;font-size:12px;color:{COLOURS["muted"]};">
-          Squads are optimised on the best legal starting XI plus a light weight on the
-          bench, because only eleven players score. That is why the bench is cheap - it
-          is there to satisfy the squad rules, not to earn points.
-        </p>
-        """
+        + summary
+        + _table(head, starters + divider + bench)
+        + _note(
+            "Squads are optimised on the best legal starting XI plus a light weight on the "
+            "bench, because only eleven players score. That is why the bench is cheap &ndash; "
+            "it is there to satisfy the squad rules, not to earn points."
+        )
     )
+
+
+def _metric(label: str, value: str, *, emphasis: bool = False) -> str:
+    """One cell of the wildcard summary strip."""
+    colour = COLOURS["accent"] if emphasis else COLOURS["text"]
+    return f"""
+    <td style="padding:12px 14px;vertical-align:top;">
+      <div style="font-size:9px;font-weight:700;letter-spacing:0.09em;
+                  text-transform:uppercase;color:{COLOURS["faint"]};">{label}</div>
+      <div style="{NUM}margin-top:4px;font-size:16px;font-weight:700;color:{colour};">
+        {value}</div>
+    </td>
+    """
 
 
 def _squad_row(player, *, is_captain: bool) -> str:
+    cell = f"padding:9px 10px;border-bottom:1px solid {COLOURS['line_soft']};"
     captain_badge = (
-        f' <span style="background:{COLOURS["confirmed"]};color:#ffffff;'
-        f'padding:1px 5px;border-radius:3px;font-size:11px;">C</span>'
-        if is_captain
-        else ""
+        " " + _pill("C", fg="#ffffff", bg=COLOURS["confirmed"]) if is_captain else ""
     )
     return f"""
-    <tr style="border-top:1px solid {COLOURS["border"]};">
-      <td>
-        <span style="color:{COLOURS["muted"]};font-size:11px;">{esc(player.position)}</span>
-        &nbsp;<strong>{esc(player.name)}</strong>
-        <span style="color:{COLOURS["muted"]};">({esc(player.team_short)})</span>{captain_badge}
+    <tr>
+      <td style="{cell}font-size:13px;">
+        <span style="display:inline-block;min-width:30px;font-size:10px;font-weight:700;
+                     color:{COLOURS["faint"]};letter-spacing:0.05em;">
+          {esc(player.position)}</span>
+        <strong style="color:{COLOURS["text"]};">{esc(player.name)}</strong>
+        <span style="color:{COLOURS["faint"]};font-size:12px;">
+          {esc(player.team_short)}</span>{captain_badge}
       </td>
-      <td style="text-align:right;">{player.price:.1f}</td>
-      <td style="text-align:right;color:{COLOURS["muted"]};">{player.gameweek_xp:.1f}</td>
-      <td style="text-align:right;"><strong>{player.season_xp:.0f}</strong></td>
-      <td style="text-align:right;color:{COLOURS["muted"]};">{player.ownership:.1f}%</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;">{player.price:.1f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;color:{COLOURS["muted"]};">
+        {player.gameweek_xp:.1f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;font-weight:700;
+                 color:{COLOURS["text"]};">{player.season_xp:.0f}</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;color:{COLOURS["muted"]};">
+        {player.ownership:.1f}%</td>
     </tr>
     """
 
 
 def _sell_list(board: Board) -> str:
     """Section 3. Each entry carries the evidence that triggered it."""
+    heading = _section_heading("Sell / avoid")
     if not board.sells:
-        return _section_heading("Sell / avoid") + _empty(
-            "Nothing meets the sell threshold this gameweek."
-        )
+        return heading + _empty("Nothing meets the sell threshold this gameweek.")
 
+    cell = f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
     rows = "\n".join(
         f"""
-        <tr style="border-top:1px solid {COLOURS["border"]};">
-          <td style="vertical-align:top;">
-            <strong>{esc(rec.score.name)}</strong>
-            <span style="color:{COLOURS["muted"]};">({esc(rec.score.team_short)},
-            {rec.score.price:.1f}m, {rec.score.ownership:.1f}% owned)</span>
-            <div style="margin-top:3px;font-size:12px;color:{COLOURS["danger"]};">
-              {esc(rec.why)}
-            </div>
+        <tr>
+          <td style="{cell}font-size:13px;">
+            <strong style="color:{COLOURS["text"]};font-size:14px;">
+              {esc(rec.score.name)}</strong>
+            <span style="color:{COLOURS["faint"]};font-size:12px;">
+              {esc(rec.score.team_short)} &middot; {rec.score.price:.1f}m &middot;
+              {rec.score.ownership:.1f}% owned</span>
+            <div style="margin-top:5px;font-size:12px;line-height:1.6;
+                        color:{COLOURS["danger"]};">{esc(rec.why)}</div>
           </td>
-          <td style="vertical-align:top;text-align:right;">{rec.score.mean:.2f} xP</td>
+          <td style="{cell}{NUM}text-align:right;font-size:13px;white-space:nowrap;
+                     color:{COLOURS["muted"]};">{rec.score.mean:.2f} xP</td>
         </tr>
         """
         for rec in board.sells
     )
-
-    return (
-        _section_heading("Sell / avoid")
-        + f"""<table role="presentation" cellpadding="6" cellspacing="0" width="100%"
-                     style="border-collapse:collapse;font-size:13px;"><tbody>{rows}</tbody></table>"""
-    )
+    return heading + _table(_th("Player") + _th("xP", align="right"), rows)
 
 
 def _watchlist(board: Board, context: RunContext) -> str:
@@ -449,28 +776,23 @@ def _watchlist(board: Board, context: RunContext) -> str:
     its provenance is not evidence. Includes `scout_news_link` where FPL has one.
     """
     heading = _section_heading("Injury-signal watchlist")
-    intro = (
-        f'<p style="margin:0 0 8px;font-size:13px;color:{COLOURS["muted"]};">'
+    intro = _note(
         "Players whose transfer outflow has spiked without a price, fixture or chip "
         "explanation, and where FPL has not yet published news. This is a leading "
-        "indicator, not a confirmation.</p>"
+        "indicator, not a confirmation."
     )
 
     if not board.watchlist:
         return heading + intro + _empty("No unexplained transfer anomalies detected.")
 
     rows = "\n".join(_watchlist_row(score) for score in board.watchlist)
-    return (
-        heading
-        + intro
-        + f"""<table role="presentation" cellpadding="6" cellspacing="0" width="100%"
-                     style="border-collapse:collapse;font-size:13px;"><tbody>{rows}</tbody></table>"""
-    )
+    return heading + intro + _table(_th("Player") + _th("Risk", align="right"), rows)
 
 
 def _watchlist_row(score: PlayerScore) -> str:
     availability = score.availability
     zscore = availability.flow_zscore
+    cell = f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
 
     validation: list[str] = []
     if availability.corroborating_sources:
@@ -484,22 +806,24 @@ def _watchlist_row(score: PlayerScore) -> str:
     if availability.scout_news_link:
         link = (
             f' &middot; <a href="{esc(availability.scout_news_link)}" '
-            f'style="color:{COLOURS["accent"]};">club statement</a>'
+            f'style="color:{COLOURS["accent"]};text-decoration:none;">club statement &rarr;</a>'
         )
 
     return f"""
-    <tr style="border-top:1px solid {COLOURS["border"]};">
-      <td style="vertical-align:top;">
-        <strong>{esc(score.name)}</strong>
-        <span style="color:{COLOURS["muted"]};">({esc(score.team_short)},
-        {score.ownership:.1f}% owned)</span>
-        <div style="margin-top:3px;font-size:12px;color:{COLOURS["muted"]};">
+    <tr>
+      <td style="{cell}font-size:13px;">
+        <strong style="color:{COLOURS["text"]};font-size:14px;">{esc(score.name)}</strong>
+        <span style="color:{COLOURS["faint"]};font-size:12px;">
+          {esc(score.team_short)} &middot; {score.ownership:.1f}% owned</span>
+        <div style="margin-top:5px;font-size:12px;line-height:1.6;color:{COLOURS["muted"]};">
           z = {zscore:.2f} against own baseline &middot;
           cause: {esc(availability.flow_cause or "unclassified")} &middot;
           {esc("; ".join(validation))}{link}
         </div>
       </td>
-      <td style="vertical-align:top;text-align:right;">{availability.risk:.0%} risk</td>
+      <td style="{cell}{NUM}text-align:right;font-size:13px;white-space:nowrap;
+                 color:{COLOURS["warning"]};font-weight:700;">
+        {availability.risk:.0%}</td>
     </tr>
     """
 
@@ -510,26 +834,26 @@ def _returning(board: Board) -> str:
     if not board.returning:
         return heading + _empty("No return signals detected.")
 
+    intro = _note("Availability improving before the price does - the cheapest window to buy in.")
+    cell = f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
     rows = "\n".join(
         f"""
-        <tr style="border-top:1px solid {COLOURS["border"]};">
-          <td style="vertical-align:top;">
-            <strong>{esc(score.name)}</strong>
-            <span style="color:{COLOURS["muted"]};">({esc(score.team_short)},
-            {score.price:.1f}m, {score.ownership:.1f}% owned)</span>
-            <div style="margin-top:3px;font-size:12px;color:{COLOURS["muted"]};">{esc(reason)}</div>
+        <tr>
+          <td style="{cell}font-size:13px;">
+            <strong style="color:{COLOURS["text"]};font-size:14px;">{esc(score.name)}</strong>
+            <span style="color:{COLOURS["faint"]};font-size:12px;">
+              {esc(score.team_short)} &middot; {score.price:.1f}m &middot;
+              {score.ownership:.1f}% owned</span>
+            <div style="margin-top:5px;font-size:12px;line-height:1.6;
+                        color:{COLOURS["muted"]};">{esc(reason)}</div>
           </td>
-          <td style="vertical-align:top;text-align:right;">{score.mean:.2f} xP</td>
+          <td style="{cell}{NUM}text-align:right;font-size:13px;white-space:nowrap;
+                     color:{COLOURS["muted"]};">{score.mean:.2f} xP</td>
         </tr>
         """
         for score, reason in board.returning
     )
-    return (
-        heading + f'<p style="margin:0 0 8px;font-size:13px;color:{COLOURS["muted"]};">'
-        "Availability improving before the price does - the cheapest window to buy in.</p>"
-        + f"""<table role="presentation" cellpadding="6" cellspacing="0" width="100%"
-                     style="border-collapse:collapse;font-size:13px;"><tbody>{rows}</tbody></table>"""
-    )
+    return heading + intro + _table(_th("Player") + _th("xP", align="right"), rows)
 
 
 def _caveats(quality: DataQuality, context: RunContext) -> str:
@@ -543,8 +867,8 @@ def _caveats(quality: DataQuality, context: RunContext) -> str:
 
     if not context.is_confirmed_phase:
         items.append(
-            "This is a provisional report. Managers' press conferences for a weekend "
-            "fixture typically land Thursday and Friday afternoon, after this run. "
+            "This is the T-24h planning report. Managers' press conferences usually land "
+            "in the day or two before a fixture, and some of them fall after this run. "
             "The T-3h report will resolve most of the outstanding fitness questions."
         )
 
@@ -573,39 +897,35 @@ def _caveats(quality: DataQuality, context: RunContext) -> str:
     if not items:
         items.append("None. All sources responded and every invariant held.")
 
-    bullets = "\n".join(f"<li style='margin-bottom:5px;'>{esc(item)}</li>" for item in items)
+    bullets = "\n".join(
+        f'<li style="margin-bottom:7px;padding-left:2px;">{esc(item)}</li>' for item in items
+    )
     return (
         _section_heading("Caveats")
-        + f'<ul style="margin:0;padding-left:20px;font-size:13px;color:{COLOURS["muted"]};">'
-        f"{bullets}</ul>"
+        + f'<ul style="margin:0;padding:0 0 0 18px;font-size:12px;line-height:1.65;'
+        f'color:{COLOURS["muted"]};">{bullets}</ul>'
     )
 
 
 def _footer(context: RunContext) -> str:
     generated = datetime.fromtimestamp(context.now_epoch, tz=UTC).strftime("%Y-%m-%d %H:%M UTC")
     return f"""
-    <hr style="margin:24px 0 12px;border:0;border-top:1px solid {COLOURS["border"]};">
-    <p style="font-size:11px;color:{COLOURS["muted"]};margin:0;">
-      fplBot &middot; generated {esc(generated)} &middot; season {esc(context.season)} &middot;
-      tier {esc(context.tier)}<br>
-      Recommendations are expected-rank-gain oriented, not expected-points oriented:
-      ownership is penalised and ceiling is rewarded. The bot does not know your squad,
-      so these are candidates, not swaps.<br>
-      Data: Fantasy Premier League, ClubElo, Fantasy Football Scout, PremierInjuries,
-      Understat. Personal, non-commercial use.
-    </p>
+    <tr><td class="fb-pad" style="padding:22px 32px 26px;background:{COLOURS["header_bg"]};
+               border-top:1px solid {COLOURS["border"]};">
+      <p style="margin:0 0 8px;font-size:11px;font-weight:700;letter-spacing:0.09em;
+                text-transform:uppercase;color:{COLOURS["faint"]};">
+        fplBot &middot; GW{context.gameweek} &middot; tier {esc(context.tier)}
+      </p>
+      <p style="margin:0;font-size:11px;line-height:1.7;color:{COLOURS["muted"]};">
+        Generated {esc(generated)} &middot; season {esc(context.season)}.<br>
+        Recommendations are expected-rank-gain oriented, not expected-points oriented:
+        ownership is penalised and ceiling is rewarded. The bot does not know your squad,
+        so these are candidates, not swaps.<br>
+        Data: Fantasy Premier League, ClubElo, Fantasy Football Scout, PremierInjuries,
+        Understat. Personal, non-commercial use.
+      </p>
+    </td></tr>
     """
-
-
-def _section_heading(title: str) -> str:
-    return (
-        f'<h2 style="margin:26px 0 8px;font-size:17px;padding-bottom:4px;'
-        f'border-bottom:2px solid {COLOURS["border"]};">{esc(title)}</h2>'
-    )
-
-
-def _empty(message: str) -> str:
-    return f'<p style="font-size:13px;color:{COLOURS["muted"]};margin:0;">{esc(message)}</p>'
 
 
 # ---------------------------------------------------------------------------
@@ -751,28 +1071,62 @@ def render_failure_html(context: RunContext, reason: str) -> str:
     user would assume the bot ran and found nothing worth saying.
     """
     quality_lines = "\n".join(
-        f"<li>{esc(name)}: {esc(status.state.value)}"
-        + (f" - {esc(status.detail)}" if status.detail else "")
+        f'<li style="margin-bottom:6px;">{esc(name)}: '
+        f'<strong style="color:{COLOURS["text"]};">{esc(status.state.value)}</strong>'
+        + (f" &ndash; {esc(status.detail)}" if status.detail else "")
         + "</li>"
         for name, status in sorted(context.data_quality.sources.items())
     )
-    return f"""<!doctype html><html><head><meta charset="utf-8"></head>
-    <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;
-                 padding:16px;color:{COLOURS["text"]};">
-      <h1 style="font-size:20px;color:{COLOURS["danger"]};margin:0 0 8px;">
-        fplBot could not produce a reliable board for GW{context.gameweek}
-      </h1>
-      <p style="font-size:14px;">
-        Deadline {esc(format_deadline(context.deadline_epoch))}
-        ({context.hours_to_deadline:.1f} hours away).
-      </p>
-      <p style="font-size:14px;"><strong>Reason:</strong> {esc(reason)}</p>
-      <p style="font-size:13px;color:{COLOURS["muted"]};">
-        Recommendations were withheld rather than sent from data past the
-        {esc(int(context.data_quality.worst_age_seconds / 3600))}-hour staleness ceiling.
-        This message exists so the silence is not mistaken for "nothing to report".
-      </p>
-      <h2 style="font-size:15px;margin:18px 0 6px;">Source status</h2>
-      <ul style="font-size:13px;">{quality_lines}</ul>
-    </body></html>
-    """
+    hours = int(context.data_quality.worst_age_seconds / 3600)
+
+    return f"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light only">
+<title>fplBot GW{context.gameweek} - no reliable board</title>
+</head>
+<body style="margin:0;padding:0;background:{COLOURS["canvas"]};font-family:{FONT};
+             color:{COLOURS["body"]};">
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background:{COLOURS["canvas"]};">
+  <tr><td align="center" style="padding:24px 12px;">
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="{CARD_WIDTH}"
+           style="width:100%;max-width:{CARD_WIDTH}px;background:{COLOURS["surface"]};
+                  border:1px solid {COLOURS["border"]};border-radius:14px;overflow:hidden;">
+      <tr><td style="background:{COLOURS["danger"]};padding:22px 30px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:0.16em;
+                    text-transform:uppercase;color:#fecaca;">fplBot &middot; run aborted</div>
+        <h1 style="margin:9px 0 0;font-size:21px;line-height:1.3;color:#ffffff;font-weight:700;">
+          fplBot could not produce a reliable board for GW{context.gameweek}
+        </h1>
+      </td></tr>
+      <tr><td style="padding:24px 30px 28px;">
+        <p style="margin:0 0 14px;font-size:14px;line-height:1.6;">
+          Deadline {esc(format_deadline(context.deadline_epoch))}
+          ({context.hours_to_deadline:.1f} hours away).
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+               style="background:{COLOURS["danger_soft"]};border-left:3px solid
+                      {COLOURS["danger"]};border-radius:6px;margin-bottom:16px;">
+          <tr><td style="padding:12px 14px;font-size:13px;line-height:1.6;
+                     color:{COLOURS["text"]};">
+            <strong>Reason:</strong> {esc(reason)}
+          </td></tr>
+        </table>
+        <p style="margin:0 0 18px;font-size:12px;line-height:1.65;color:{COLOURS["muted"]};">
+          Recommendations were withheld rather than sent from data past the
+          {esc(hours)}-hour staleness ceiling. This message exists so the silence is not
+          mistaken for &ldquo;nothing to report&rdquo;.
+        </p>
+        <h2 style="font-size:13px;font-weight:700;margin:0 0 4px;color:{COLOURS["text"]};">
+          Source status</h2>
+        <div style="width:34px;height:3px;background:{COLOURS["danger"]};border-radius:2px;
+                    margin-bottom:12px;"></div>
+        <ul style="margin:0;padding:0 0 0 18px;font-size:12px;line-height:1.6;
+                   color:{COLOURS["muted"]};">{quality_lines}</ul>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>"""

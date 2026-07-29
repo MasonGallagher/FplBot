@@ -10,9 +10,9 @@ a deadline approaching.
 | When | What happens |
 |---|---|
 | Every hour, `:07` London | Poll runs, snapshots, usually exits `snapshot_only` |
-| T-48h | Email, labelled `PROVISIONAL` |
-| T-24h | Email, labelled `PROVISIONAL` |
-| T-3h | Email, labelled `CONFIRMED` - **the one to act on** |
+| T-24h | Email, labelled `PROVISIONAL` - the planning report |
+| T-3h | Email, labelled `CONFIRMED` - **the one to act on**, post team news |
+| Every other run in the window | Lock already taken, exits `suppressed` |
 | Tuesday `03:17` London | Backfill runs, ~120 players |
 | Off-season | Snapshots daily, notifies never, exits `no_deadline` |
 
@@ -35,7 +35,7 @@ notification window is the correct behaviour.
 
 ```bash
 STACK=fplbot-prod
-REGION=eu-west-2
+REGION=eu-west-1
 
 # What happened on the last run?
 sam logs --stack-name $STACK --region $REGION --tail

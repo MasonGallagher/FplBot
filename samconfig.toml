@@ -5,7 +5,7 @@ version = 0.1
 
 [default.global.parameters]
 stack_name = "fplbot-dev"
-region = "eu-west-2"
+region = "eu-west-1"
 
 [default.build.parameters]
 parallel = true

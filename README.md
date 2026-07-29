@@ -79,18 +79,26 @@ imports perfectly on your machine and fails inside Lambda with an error naming a
 ### Two phases, and why the second one is the important one
 
 The bot polls **hourly**, at seven minutes past, Europe/London. Every run takes a
-snapshot. Only runs that cross a notification threshold - 48 hours, 24 hours or
-3 hours before the deadline - send an email.
+snapshot. Two runs per deadline send an email - **T-24h** and **T-3h** - so roughly
+two a week in season.
 
 The T-3h run is the one to act on, and this is not a detail. On the live injury
 table, **23 of 44 listed players are "Currently Being Assessed"** - over half.
-That status is precisely what a manager's press conference resolves, and pressers
-for a Saturday fixture land Thursday and Friday afternoon. T-48h for a Saturday
-11:00 deadline is **Thursday 11:00, before most of them**.
+That status is precisely what a manager's press conference resolves, and those
+pressers land in the day or two before a fixture. T-24h can fall ahead of some of
+them - early enough to plan a transfer and watch a price change, but labelled
+provisional for that reason. T-3h sits after them.
 
-A single 48-hour run therefore guesses on the majority of its injury cases. The
-48h and 24h emails are labelled `PROVISIONAL` in a large amber banner; the 3h one
-is labelled `CONFIRMED`.
+For a weekend round that means T-24h on Friday morning and T-3h on Saturday
+morning. **That is an example, not the schedule.** Deadlines are not always Friday
+or Saturday - midweek rounds put them on a Tuesday or Wednesday and the festive
+period scatters them further. Both tiers are pure offsets from the deadline epoch,
+so no case is special; where the pressers have already happened by T-24h, the
+provisional label simply errs on the cautious side.
+
+The T-24h email is labelled `PROVISIONAL` in an amber banner, the T-3h one
+`CONFIRMED`. There was once a T-48h tier as well; it was dropped because it fired
+before *any* press conference and was superseded by both of the others.
 
 ### The objective is rank, not points
 

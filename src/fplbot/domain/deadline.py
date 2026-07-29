@@ -29,8 +29,11 @@ from fplbot.config import CONFIRMED_TIER_SECONDS, NOTIFY_TIERS_SECONDS
 from fplbot.models.fpl import Bootstrap, Event
 from fplbot.observability import logger
 
-# The outermost tier. Beyond this we snapshot but do not notify.
-WINDOW_SECONDS = 48 * 3600
+# The outermost tier. Beyond this we snapshot but do not notify. Derived rather
+# than written out, because a hardcoded window that disagrees with the tier list
+# fails silently in the worse direction: too small and the loosest tier can never
+# fire at all.
+WINDOW_SECONDS = max(NOTIFY_TIERS_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -105,13 +108,13 @@ def next_deadline(bootstrap: Bootstrap, now_epoch: int) -> DeadlineInfo | None:
 def due_tier(seconds_remaining: int, already_sent: set[str] | None = None) -> str | None:
     """Which notification tier, if any, this run should fire.
 
-    Tiers are 48h, 24h and 3h. A run "crosses" a tier when the remaining time has
-    dropped at or below that tier's threshold. Because we poll hourly, a run at
-    T-47h has crossed the 48h tier; a run at T-2h has crossed all three.
+    Tiers are 24h and 3h. A run "crosses" a tier when the remaining time has
+    dropped at or below that tier's threshold, so with hourly polling the first
+    run inside T-24h fires and every later one before T-3h finds the lock taken.
 
     We return the **tightest** tier crossed and not yet sent, so a run that fires
-    late (a missed schedule, a manual invoke at T-4h) sends the most current
-    advice rather than replaying a stale 48h view.
+    late (a missed schedule, a manual invoke at T-2h) sends the most current
+    advice rather than replaying a stale planning view.
 
     Args:
         seconds_remaining: from `next_deadline`.
@@ -120,7 +123,7 @@ def due_tier(seconds_remaining: int, already_sent: set[str] | None = None) -> st
             check that avoids doing the work at all.
 
     Returns:
-        "48h" | "24h" | "3h", or None when no tier is due.
+        "24h" | "3h", or None when no tier is due.
     """
     if seconds_remaining <= 0:
         # Deadline has passed. Nothing to advise on.
@@ -145,14 +148,20 @@ def tier_label(threshold_seconds: int) -> str:
 def is_confirmed_phase(tier: str) -> bool:
     """Whether this tier is the one the user should act on.
 
-    Phase 1 (48h/24h) is provisional and must be labelled as such. At T-48h for a
-    Saturday 11:00 deadline - that is Thursday 11:00 - most managers' press
-    conferences have not happened yet, and on the live injury table more than
-    half of the listed players are "Currently Being Assessed", a status those
-    press conferences exist to resolve. A single 48h run therefore guesses on the
-    majority of its injury cases.
+    The T-24h report is provisional and must be labelled as such, because it can
+    land before the press conferences that resolve "Currently Being Assessed".
+    T-3h sits after them and is the output to act on.
 
-    Phase 2 at T-3h re-polls the fast-moving sources and is the output to act on.
+    Worked example, for a weekend round: a Saturday 11:00 deadline puts T-24h at
+    Friday 11:00, ahead of some of the Thursday/Friday afternoon pressers, and
+    T-3h at Saturday 08:00, after all of them.
+
+    That is an example and not the rule. Deadlines are not always Friday or
+    Saturday: midweek rounds put them on a Tuesday or Wednesday, where pressers
+    usually land the day before and T-24h is often already informed by them. Both
+    tiers are pure offsets from the deadline epoch, so every case is handled by
+    the same arithmetic - and the labelling errs conservative, telling the reader
+    to wait when the news may already be in rather than the reverse.
     SPEC section 3.
     """
     return tier == tier_label(CONFIRMED_TIER_SECONDS)

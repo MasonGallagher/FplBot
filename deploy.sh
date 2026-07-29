@@ -32,6 +32,17 @@ set -euo pipefail
 # is opt-out and this sidesteps the crash entirely.
 export SAM_CLI_TELEMETRY="${SAM_CLI_TELEMETRY:-0}"
 
+# Under Git Bash / MSYS, any argument that looks like a POSIX path (e.g. an SSM
+# parameter name such as /fplbot/dev/odds-api-key passed to --parameter-overrides)
+# gets silently rewritten to a Windows path by prepending the Git install root
+# before the child process ever sees it. That mangled value then breaks whatever
+# consumes it. A blanket MSYS_NO_PATHCONV=1 "fixes" that but also disables the
+# translation that genuine file-path arguments need to reach native (non-MSYS)
+# tools like aws.exe - e.g. it turns the mktemp response file in invoke_once()
+# into a path aws.exe can't find. Excluding just this one value keeps the rest
+# of MSYS's path conversion intact.
+export MSYS2_ARG_CONV_EXCL="${MSYS2_ARG_CONV_EXCL:-OddsApiKeyParameter=}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -55,10 +66,14 @@ die()   { printf "\n%sERROR: %s%s\n\n" "$BOLD$RED" "$*" "$RESET" >&2; exit 1; }
 # Defaults, overridable from .env or the command line
 # ---------------------------------------------------------------------------
 ENVIRONMENT="dev"
-# eu-west-2 (London) is the default for a reason: it is nearest the Fastly
-# LHR/LCY points of presence that front the FPL API, which shaves real latency
-# off every request. eu-west-1 (Dublin) is the other sensible choice.
-AWS_REGION="${AWS_REGION:-eu-west-2}"
+# eu-west-1 (Dublin) is where the stacks actually live, so it is the default
+# here. Both it and eu-west-2 (London) sit near the Fastly LHR/LCY points of
+# presence fronting the FPL API and the latency difference between them is
+# immaterial at one request per hour; being able to deploy from a fresh clone
+# without a .env and land in the same region as everything else is worth more.
+# Change this and samconfig.toml together, or a bare `sam build` disagrees with
+# the script that deploys its output.
+AWS_REGION="${AWS_REGION:-eu-west-1}"
 SEASON="2026-27"
 STACK_PREFIX="fplbot"
 DRY_RUN="false"
@@ -105,7 +120,7 @@ usage() {
 
 Options:
   --env <dev|prod>     Target environment (default: dev)
-  --region <region>    AWS region (default: eu-west-2)
+  --region <region>    AWS region (default: eu-west-1)
   --pipeline           Deploy the CI/CD pipeline stack instead of the application
   --delete             Delete the stack instead of deploying it
   --test-only          Run tests and exit
@@ -199,9 +214,9 @@ GITHUB_CONNECTION_ARN=
 GITHUB_REPOSITORY=${GITHUB_REPOSITORY}
 GITHUB_BRANCH=${GITHUB_BRANCH}
 
-# Where CodePipeline sends build failures and the manual-approval notice.
-# Defaults to ALARM_EMAIL - only set this if you want pipeline chatter going
-# somewhere different from the "the bot is broken" alarms.
+# Where CodePipeline reports that a merge deployed, or failed to. Defaults to
+# ALARM_EMAIL - only set this if you want pipeline chatter going somewhere
+# different from the "the bot is broken" alarms.
 # NOTIFICATION_EMAIL=
 EOF
 
@@ -442,24 +457,23 @@ deploy_pipeline() {
   #   ALARM_EMAIL        -> the application stack's SNS topic. "The bot is
   #                         broken": schema drift, a violated invariant, the
   #                         poll going silent. Fires at any hour, or never.
-  #   NOTIFICATION_EMAIL -> the pipeline stack's SNS topic. "A deploy needs
-  #                         you": build failed, or - the important one - a
-  #                         manual approval is waiting. Fires only when you deploy.
+  #   NOTIFICATION_EMAIL -> the pipeline stack's SNS topic. "A deploy happened,
+  #                         or failed to." Fires only when you merge.
   #
   # For a single-owner project they are almost always the same inbox, so this
   # defaults rather than asking twice. Set NOTIFICATION_EMAIL explicitly only to
   # split them, or to "-" to disable pipeline notifications while keeping alarms.
   #
-  # The default matters: without it, an unset NOTIFICATION_EMAIL means the
-  # manual-approval notice goes nowhere, and the approval gate is precisely the
-  # thing that blocks a prod deploy. You would sit waiting for an email that was
-  # never sent.
+  # The default matters more since prod stopped being gated by a human. Nothing
+  # pauses to ask for approval any more, so this email is the only thing that
+  # tells you a merge reached production - or that it died in the test stage and
+  # the bot is still running last week's code.
   local notification_email="${NOTIFICATION_EMAIL:-$ALARM_EMAIL}"
   [[ "$notification_email" == "-" ]] && notification_email=""
 
   if [[ -z "$notification_email" ]]; then
-    warn "Pipeline notifications are disabled - you will not be emailed when a"
-    warn "deploy is waiting on your manual approval. Watch the console instead."
+    warn "Pipeline notifications are disabled - since prod deploys unattended,"
+    warn "nothing will tell you a merge went live or failed. Watch the console."
   fi
 
   [[ -n "$GITHUB_CONNECTION_ARN" ]] || die \
@@ -566,14 +580,15 @@ ${BOLD}${GREEN}Deployment complete.${RESET}
 
 ${BOLD}What happens now${RESET}
   The poll function runs hourly at 7 minutes past, Europe/London. Every run
-  snapshots FPL's data. When a deadline comes within 48h, 24h or 3h it also
-  emails a board. The T-3h report is the one to act on - the earlier ones fire
-  before most managers' press conferences.
+  snapshots FPL's data. When a deadline comes within 24h or 3h it also emails a
+  board - two per gameweek. The T-3h report is the one to act on: it lands after
+  the press conferences that resolve 'Currently Being Assessed', which the T-24h
+  planning report fires ahead of.
 
 ${BOLD}Useful commands${RESET}
   Invoke now:      aws lambda invoke --function-name ${STACK_PREFIX}-poll-${ENVIRONMENT} --region ${AWS_REGION} /dev/stdout
   Force an email:  aws lambda invoke --function-name ${STACK_PREFIX}-poll-${ENVIRONMENT} --region ${AWS_REGION} \\
-                     --cli-binary-format raw-in-base64-out --payload '{"force_tier":"48h"}' /dev/stdout
+                     --cli-binary-format raw-in-base64-out --payload '{"force_tier":"24h"}' /dev/stdout
   Tail logs:       sam logs --stack-name ${STACK_NAME} --region ${AWS_REGION} --tail
   Local run:       sam local invoke PollFunction --event events/scheduled.json --template-file ${BUILD_DIR}/template.yaml
 

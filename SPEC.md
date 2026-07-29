@@ -44,7 +44,7 @@ them.
 ## 1. Scope
 
 **In scope (v1):**
-- Detect that the next deadline is within 48h; act; and again at T−3h.
+- Detect that the next deadline is within 24h; act; and again at T−3h once team news has landed.
 - Ingest FPL official API + third-party stats, odds, injury and predicted-lineup data.
 - Score every player, produce a ranked **buy board** and a **sell/avoid list**.
 - Email the result.
@@ -81,7 +81,9 @@ human-readable "why".
   - Lambda's hard limit is **250 MB unzipped** across function + layers.
 - **Memory** 1024 MB, **timeout** 120s (poll) / 600s (backfill, separate function).
 - **Reserved concurrency: 1.** This is a scheduled singleton.
-- **Region:** `eu-west-1` or `eu-west-2` — nearest the Fastly LHR/LCY POPs fronting FPL.
+- **Region:** `eu-west-1`. Both it and `eu-west-2` sit near the Fastly LHR/LCY POPs
+  fronting FPL; `eu-west-1` is the one actually deployed, and every default in the
+  repo now agrees with it.
 
 **Storage**
 - **DynamoDB**, single table, on-demand, TTL enabled, PITR on.
@@ -117,19 +119,31 @@ Offset to `:07` to avoid the top-of-hour herd and let FPL's 5-minute CDN cache s
 Polling faster than 5 minutes is **pure waste** — FPL's edge TTL is 300s, so you
 will get byte-identical cached responses and a spurious velocity of zero.
 
-**Phase 2 — confirmation run at T−3h.**
+**Phase 2 — two notifications: a planning report at T−24h, a confirmation at T−3h.**
 
-This is not optional polish. On the live injury table, **23 of 44 listed players are
-"Currently Being Assessed"** — over half. That status is what a manager's press
-conference resolves. Pressers for a Saturday fixture land Thursday–Friday afternoon;
-T−48h for a Saturday 11:00 deadline is **Thursday 11:00, before most of them**.
+This started as three tiers (48h, 24h, 3h). The 48h tier is gone: it fired before any
+press conference had happened and was superseded by both of the others, so it cost an
+email a gameweek and bought nothing. Two remain, and each does a distinct job.
 
-A single 48h run therefore guesses on the majority of its injury cases. Phase 2
-re-polls only the fast-moving sources (FPL bootstrap, PremierInjuries, FFS lineups,
-goalscorer odds) and re-solves if anything material changed. **Phase 2's output is
-the one the user should act on**; Phase 1 is provisional and must be labelled as such.
+The confirmation run is not optional polish. On the live injury table, **23 of 44
+listed players are "Currently Being Assessed"** — over half. That status is what a
+manager's press conference resolves, and those pressers land in the day or two
+before a fixture. T−24h can fall ahead of some of them; T−3h sits after them.
 
-**Notification tiers:** 48h, 24h, 3h. Idempotency via a DynamoDB conditional write on
+For a weekend round: a Saturday 11:00 deadline puts T−24h at Friday 11:00 and T−3h
+at Saturday 08:00. **That is a worked example, not the schedule.** Deadlines are
+not always Friday or Saturday - midweek rounds fall on a Tuesday or Wednesday, and
+the festive period scatters them further. Every tier is an offset from
+`deadline_time_epoch`, so there is no weekday logic anywhere and no case to
+special-case. Where a presser has already landed by T−24h the provisional label is
+merely conservative, which is the safe direction to be wrong in.
+
+So T−24h is early enough to plan a transfer and watch a price change, and is labelled
+provisional. T−3h re-polls the fast-moving sources (FPL bootstrap, PremierInjuries,
+FFS lineups, goalscorer odds), re-solves if anything material changed, and **is the
+output the user should act on**.
+
+**Notification tiers:** 24h, 3h. Idempotency via a DynamoDB conditional write on
 `NOTIFY#{season}#{gw}#{tier}` with `ConditionExpression="attribute_not_exists(pk)"`.
 Key on gameweek and tier, **never on wall-clock time**, so Scheduler retries, manual
 re-invokes and at-least-once delivery are all safe.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 from fplbot.config import TUNABLES
@@ -19,7 +21,13 @@ from fplbot.models.domain import (
     SourceState,
 )
 from fplbot.report.email import build_message, build_subject
-from fplbot.report.render import esc, render_failure_html, render_html, render_text
+from fplbot.report.render import (
+    COLOURS,
+    esc,
+    render_failure_html,
+    render_html,
+    render_text,
+)
 from tests.test_squad import a_pool as a_squad_pool
 
 
@@ -98,7 +106,7 @@ def a_context(*, confirmed: bool = False) -> RunContext:
         gameweek=3,
         deadline_epoch=1_786_662_000,
         seconds_to_deadline=86_400,
-        tier="3h" if confirmed else "48h",
+        tier="3h" if confirmed else "24h",
         is_confirmed_phase=confirmed,
         season_has_started=True,
         data_quality=quality,
@@ -128,11 +136,8 @@ class TestRendering:
             assert heading in html
 
     def test_provisional_phase_is_prominent(self) -> None:
-        """Phase 1 output must be labelled as such.
-
-        It fires before most managers' press conferences, when over half the
-        injury table is still 'Currently Being Assessed'.
-        """
+        """The T-24h report must be labelled as provisional, and must point at
+        the confirmed one that follows."""
         board = Board({}, [], [], [])
 
         html = render_html(a_context(confirmed=False), board)
@@ -196,6 +201,63 @@ class TestRendering:
         assert "Source status" in html
 
 
+class TestSpreadChart:
+    """The chart is table cells with percentage widths - no JS, no SVG, no image.
+
+    Gmail strips <svg> and refuses `data:` URIs, and a server-rendered PNG would
+    mean carrying matplotlib for one picture. These tests pin the arithmetic, not
+    the markup.
+    """
+
+    def test_chart_appears_with_the_buy_board(self) -> None:
+        board = Board(build_buy_board([a_score(1), a_score(2)], TUNABLES), [], [], [])
+
+        html = render_html(a_context(), board)
+
+        assert "Outcome spread" in html
+        assert "floor to mean" in html
+
+    def test_chart_is_omitted_when_there_is_nothing_to_plot(self) -> None:
+        """An empty chart frame reads as a rendering failure, so draw nothing."""
+        html = render_html(a_context(), Board({}, [], [], []))
+
+        assert "Outcome spread" not in html
+
+    def test_segment_widths_never_exceed_the_track(self) -> None:
+        """Widths are percentages of one shared scale. Summing past 100% would
+        push the tail segment onto a second row and break every bar."""
+        scores = [a_score(i, price=6.0 + i) for i in range(1, 7)]
+        board = Board(build_buy_board(scores, TUNABLES), [], [], [])
+
+        html = render_html(a_context(), board)
+
+        # Each bar is one <tr> of segments inside a fixed-layout table.
+        for row in re.findall(r'table-layout:fixed.*?<tr>(.*?)</tr>', html, re.S):
+            widths = [float(w) for w in re.findall(r'width="([\d.]+)%"', row)]
+            assert widths
+            assert sum(widths) <= 100.01
+
+    def test_the_scale_is_shared_across_players(self) -> None:
+        """Per-row scaling would make a narrow spread look as wide as a broad one,
+        which inverts the only thing the chart exists to communicate."""
+        wide = a_score(1, distribution=Distribution(samples=np.linspace(0.0, 20.0, 2000)))
+        narrow = a_score(2, distribution=Distribution(samples=np.linspace(4.0, 6.0, 2000)))
+        board = Board(build_buy_board([wide, narrow], TUNABLES), [], [], [])
+
+        html = render_html(a_context(), board)
+        rows = re.findall(r'table-layout:fixed.*?<tr>(.*?)</tr>', html, re.S)
+
+        def coloured_width(row: str) -> float:
+            return sum(
+                float(w)
+                for w, colour in re.findall(r'width="([\d.]+)%"[^>]*background:(#[0-9a-f]+)', row)
+                if colour != COLOURS["track"]
+            )
+
+        assert len(rows) == 2
+        assert coloured_width(rows[0]) > coloured_width(rows[1])
+
+
 class TestCaptainSection:
     def test_reports_the_doubled_numbers(self) -> None:
         """The armband doubles the score, so the doubled figures are what we show.
@@ -242,7 +304,7 @@ class TestWildcardSection:
         assert "Best wildcard squad" in html
         assert squad is not None
         assert squad.formation in html
-        assert "in the bank" in html
+        assert "In the bank" in html
         assert "Bench (in autosub order)" in html
 
     def test_explains_why_the_bench_is_cheap(self) -> None:
@@ -297,9 +359,29 @@ class TestEmailAssembly:
     def test_headers_are_set(self) -> None:
         message = build_message("S", "<p>h</p>", "t", "from@x.com", ["one@x.com", "two@x.com"])
 
-        assert message["From"] == "from@x.com"
+        # From carries a display name, so the address is a substring rather than
+        # the whole header: "fplBot <from@x.com>".
+        assert "from@x.com" in message["From"]
+        assert "fplBot" in message["From"]
         assert "one@x.com" in message["To"]
         assert "two@x.com" in message["To"]
+
+    def test_deliverability_headers_are_present(self) -> None:
+        """Gmail's bulk-sender guidance names the unsubscribe pair explicitly, and
+        Date/Message-ID are what a well-formed message is expected to arrive with.
+
+        None of this rescues an unauthenticated @gmail.com sender - see the
+        module docstring - but their absence is a needless negative signal.
+        """
+        message = build_message("S", "<p>h</p>", "t", "bot@example.com", ["you@example.com"])
+
+        assert message["Reply-To"] == "bot@example.com"
+        assert message["Date"]
+        assert message["Message-ID"].endswith("@example.com>")
+        assert message["Auto-Submitted"] == "auto-generated"
+        assert message["List-Unsubscribe"] == "<mailto:bot@example.com?subject=unsubscribe>"
+        assert message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+        assert "example.com" in message["List-Id"]
 
     def test_subject_leads_with_the_phase(self) -> None:
         """Often all that gets read on a phone, and FINAL vs provisional is the

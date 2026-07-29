@@ -89,13 +89,12 @@ class TestDueTier:
     @pytest.mark.parametrize(
         ("hours_remaining", "expected"),
         [
-            (72, None),  # outside every window
-            (49, None),  # just outside 48h
-            (47.5, "48h"),  # crossed 48h
-            (30, "48h"),  # still the loosest uncrossed tier
-            (23, "24h"),
-            (4, "24h"),
-            (2.5, "3h"),  # the one to act on
+            (72, None),  # outside the window
+            (49, None),  # the old 48h tier no longer fires
+            (25, None),  # just outside 24h
+            (23.5, "24h"),  # crossed the planning tier
+            (4, "24h"),  # still the loosest uncrossed tier
+            (2.5, "3h"),  # team news has landed - the one to act on
             (0.5, "3h"),
         ],
     )
@@ -105,27 +104,27 @@ class TestDueTier:
     def test_returns_the_tightest_unsent_tier(self) -> None:
         """A late run should send current advice, not replay a stale view.
 
-        If the 48h and 24h runs already fired and we are now at T-2h, the right
-        answer is the 3h tier - the one with the freshest team news - not a
-        repeat of the 48h picture.
+        If the 24h run already fired and we are now at T-2h, the right answer is
+        the 3h tier - the one with the freshest team news - not a repeat of the
+        planning report.
         """
-        assert due_tier(2 * HOUR, already_sent={"48h", "24h"}) == "3h"
+        assert due_tier(2 * HOUR, already_sent={"24h"}) == "3h"
 
     def test_none_after_the_deadline(self) -> None:
         assert due_tier(-HOUR) is None
         assert due_tier(0) is None
 
     def test_respects_already_sent(self) -> None:
-        assert due_tier(int(1.5 * HOUR), already_sent={"48h", "24h", "3h"}) is None
+        assert due_tier(int(1.5 * HOUR), already_sent={"24h", "3h"}) is None
 
 
 class TestPhase:
     def test_only_the_three_hour_tier_is_confirmed(self) -> None:
-        """Phase 1 output is provisional and must be labelled as such.
+        """The T-24h report is provisional and must be labelled as such.
 
-        At T-48h for a Saturday deadline - Thursday morning - most managers'
-        press conferences have not happened, and over half the injury table is
-        still 'Currently Being Assessed'.
+        For a Saturday 11:00 deadline it lands Friday 11:00, ahead of some of the
+        Friday-afternoon press conferences that resolve 'Currently Being
+        Assessed'. By T-3h those have happened.
         """
         assert is_confirmed_phase("3h") is True
         assert is_confirmed_phase("24h") is False
@@ -172,6 +171,8 @@ class TestDeadlineInfo:
     def test_within_window(self, bootstrap: Bootstrap) -> None:
         event = bootstrap.events[0]
 
-        assert DeadlineInfo(event, 47 * HOUR).within_window is True
-        assert DeadlineInfo(event, 49 * HOUR).within_window is False
+        assert DeadlineInfo(event, 23 * HOUR).within_window is True
+        # The window is derived from the loosest tier, which is now 24h -
+        # 47h was inside it when a 48h tier existed.
+        assert DeadlineInfo(event, 47 * HOUR).within_window is False
         assert DeadlineInfo(event, -HOUR).within_window is False

@@ -591,6 +591,10 @@ def _build_availability_signals(
             news_age_hours=news_age,
         )
 
+    # Suppressed on the confirmed tier: by T-3h the pressers have happened, so a
+    # player still carrying this flag is a genuine unknown rather than one we are
+    # simply early for. On the T-24h report it is the opposite - the flag means
+    # "ask again later", and the T-3h report is where that answer arrives.
     awaiting = sum(1 for s in signals.values() if s.awaiting_press_conference)
     if awaiting and not run_context.is_confirmed_phase:
         run_context.data_quality.add_caveat(

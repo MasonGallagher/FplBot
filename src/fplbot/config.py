@@ -36,11 +36,25 @@ USER_AGENT = f"fplBot/1.0 (personal, non-commercial; +{CONTACT_URL})"
 # All deadline arithmetic is integer seconds against `deadline_time_epoch`.
 # Never date arithmetic - that is how DST bugs get in. SPEC section 3.
 HOUR = 3600
-NOTIFY_TIERS_SECONDS: tuple[int, ...] = (48 * HOUR, 24 * HOUR, 3 * HOUR)
+# Two notifications per deadline: a planning report at T-24h and a confirmation
+# once team news has landed. This was 48h/24h/3h; the 48h tier is gone because it
+# fired before any press conference and was superseded by both of the others.
+#
+# The two that remain do different jobs and both earn their send. T-24h is early
+# enough to plan a transfer and watch a price change, but can land before the
+# press conferences that resolve "Currently Being Assessed". T-3h sits after
+# them, and is the one to act on.
+#
+# Both are offsets from the deadline, never from a day of the week. Deadlines are
+# not always Friday or Saturday - midweek rounds put them on a Tuesday or
+# Wednesday, and the festive period scatters them further. Anchoring to the
+# deadline epoch is what makes the tiers correct for all of those without
+# special-casing; a weekend fixture is only ever the worked example below.
+NOTIFY_TIERS_SECONDS: tuple[int, ...] = (24 * HOUR, 3 * HOUR)
 
 # The tier we consider "confirmed" rather than "provisional". Team news from
-# managers' press conferences has landed by T-3h; at T-48h more than half the
-# injury table is still "Currently Being Assessed". SPEC section 3, phase 2.
+# managers' press conferences has landed by T-3h; at T-24h a meaningful share of
+# the injury table is still awaiting one. SPEC section 3, phase 2.
 CONFIRMED_TIER_SECONDS = 3 * HOUR
 
 # Refuse to send transfer advice built on data older than this. Past the ceiling
@@ -333,7 +347,9 @@ def get_settings() -> Settings:
         email_to=recipients,
         season=_env("SEASON", "2026-27"),
         environment=_env("ENVIRONMENT", "dev"),
-        aws_region=_env("AWS_REGION", "eu-west-2"),
+        # Lambda injects AWS_REGION itself, so this fallback only applies to local
+        # runs - but it should still agree with where the stack actually lives.
+        aws_region=_env("AWS_REGION", "eu-west-1"),
         odds_api_key_parameter=os.environ.get("ODDS_API_KEY_PARAMETER") or None,
         # DRY_RUN builds the whole report but does not send it. Invaluable for
         # `sam local invoke` and for the first live run of a season.
