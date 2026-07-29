@@ -89,7 +89,7 @@ ALARM_EMAIL=""
 EMAIL_FROM=""
 EMAIL_TO=""
 GITHUB_CONNECTION_ARN=""
-GITHUB_REPOSITORY="MasonGallagher/fplBot"
+GITHUB_REPOSITORY="MasonGallagher/FplBot"
 GITHUB_BRANCH="main"
 NOTIFICATION_EMAIL=""
 
@@ -295,6 +295,24 @@ run_tests() {
     info "Installing development dependencies..."
     "$python_bin" -m pip install --quiet -r layer/requirements.txt
     "$python_bin" -m pip install --quiet -e ".[dev]"
+  fi
+
+  # Lint before the tests, and with the SAME commands the pipeline's
+  # buildspec-test.yml runs. This used to be pytest only, which meant a local
+  # `./deploy.sh` could pass while the pipeline failed on formatting - the worst
+  # kind of gap, because you find out from a broken deploy rather than from the
+  # check that exists to tell you. `ruff format --check` in particular fails on
+  # nothing more than a quote style, so it will never be caught by running tests.
+  if "$python_bin" -m ruff --version >/dev/null 2>&1; then
+    "$python_bin" -m ruff check src tests \
+      || die "Lint failed. Fix it, or run: $python_bin -m ruff check --fix src tests"
+    "$python_bin" -m ruff format --check src tests \
+      || die "Formatting differs from the pipeline's. Run: $python_bin -m ruff format src tests"
+    ok "Lint and formatting clean"
+  else
+    warn "ruff is not installed, so formatting was not checked here."
+    warn "The pipeline's Test stage still runs it, and will fail the deploy if it differs."
+    warn "Install it with: $python_bin -m pip install ruff"
   fi
 
   # Dummy settings so imports that read the environment do not fail. The suite
