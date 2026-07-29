@@ -1,7 +1,9 @@
 # Architecture
 
 How the pieces fit, and why each one is there. If you want the *decisions* rather
-than the shape, read [DECISIONS.md](DECISIONS.md).
+than the shape, read [DECISIONS.md](DECISIONS.md). For the same shape as rendered
+diagrams — including a plain-English version for non-technical readers — see
+[DIAGRAMS.md](DIAGRAMS.md).
 
 ---
 

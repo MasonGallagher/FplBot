@@ -17,6 +17,7 @@ surprise is usually deliberate and there is a comment explaining it.
 | Document | What it covers |
 |---|---|
 | This file | Getting it running, and how the pieces fit |
+| [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | **Start here.** Diagrams — plain-English first, then the wiring |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layering, data flow, why each AWS service |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision records - the *why* behind each choice |
 | [docs/MODEL.md](docs/MODEL.md) | How a player becomes a number, and why it is a distribution |
