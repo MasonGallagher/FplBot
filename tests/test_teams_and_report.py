@@ -62,6 +62,29 @@ class TestTeamAliases:
         assert resolve_team_id("Tottenham", teams_by_name) == 18
         assert resolve_team_id("Barcelona", teams_by_name) is None
 
+    def test_the_2026_27_promoted_clubs_resolve(self) -> None:
+        """Coventry, Hull and Ipswich came up for 2026-27. Until they were added
+        the ingest assertion fired every run and third-party data for all three
+        silently failed to join - no xG, no lineups, no injury rows.
+
+        The short codes are FPL's own: COV, HUL and IPS. Note IPS, not ISP.
+        """
+        assert canonical_team("Coventry City") == "Coventry City"
+        assert canonical_team("Hull City") == "Hull City"
+        assert canonical_team("Ipswich Town") == "Ipswich Town"
+
+    def test_promoted_clubs_resolve_from_third_party_short_forms(self) -> None:
+        """ClubElo and the lineup sources use the short form, not FPL's."""
+        for alias, expected in [
+            ("Coventry", "Coventry City"),
+            ("COV", "Coventry City"),
+            ("Hull", "Hull City"),
+            ("HUL", "Hull City"),
+            ("Ipswich", "Ipswich Town"),
+            ("IPS", "Ipswich Town"),
+        ]:
+            assert canonical_team(alias) == expected, f"{alias} should resolve to {expected}"
+
     def test_promotion_surfaces_loudly(self) -> None:
         """This fires every August when promoted clubs arrive - by design.
 

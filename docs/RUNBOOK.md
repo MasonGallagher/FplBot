@@ -16,6 +16,71 @@ a deadline approaching.
 | Tuesday `03:17` London | Backfill runs, ~120 players |
 | Off-season | Snapshots daily, notifies never, exits `no_deadline` |
 
+## Configuring The Odds API
+
+Optional. Without it, match probabilities come from ClubElo's model and the only
+thing lost is **player-level goalscorer pricing** — the market anchor that sharpens
+an individual's goal probability. ClubElo still covers 1X2 and clean sheets, so
+the board works without it.
+
+The key never appears in git, in `.env`, or in CloudFormation. Only the SSM
+parameter *name* travels; the function reads the SecureString at runtime under an
+IAM policy scoped to that one parameter.
+
+**1. Store the key** (free tier at <https://the-odds-api.com>, 500 credits/month):
+
+```bash
+aws ssm put-parameter   --name /fplbot/prod/odds-api-key   --value 'YOUR_KEY_HERE'   --type SecureString --overwrite --region eu-west-1
+```
+
+**2. Point the pipeline at it**, so both stacks it deploys pick it up:
+
+```bash
+# in .env
+ODDS_API_KEY_PARAMETER=/fplbot/prod/odds-api-key
+
+./deploy.sh --pipeline
+```
+
+The pipeline previously did not pass this parameter through at all, so both
+stacks defaulted to empty and every report read "Odds API not configured"
+regardless of what was in SSM. Setting it in `.env` alone was never enough.
+
+**3. Confirm** — after the next run, this line disappears from the caveats and
+`OddsCreditsRemaining` starts reporting. Below 80 remaining credits the source is
+skipped deliberately, to keep a reserve for the rest of the month; that is
+`fplbot-prod-odds-quota-low`.
+
+---
+
+## Promotion and relegation
+
+Every August three clubs arrive and the ingest assertion fires:
+
+```
+Unrecognised team name(s) ['Coventry City', ...] - promoted clubs have arrived
+```
+
+This is **working as intended**, and is deliberately loud. Team names are never
+fuzzy-matched — "Manchester City" and "Manchester United" are 82% similar by
+token ratio, and confusing them would corrupt every fixture and clean-sheet
+probability in the gameweek. So the map is hardcoded and unknown names are
+reported rather than guessed.
+
+Until the map is updated, **third-party data for those clubs does not join**: no
+xG, no predicted line-ups, no injury rows. Their players still appear, scored
+from positional priors alone.
+
+Add them to `TEAM_ALIASES` in `src/fplbot/domain/teams.py`, canonical name
+matching FPL's `teams[].name`, with every short form the third-party sources use.
+Take the short code from FPL rather than assuming — 2026-27's Ipswich is `IPS`,
+which is easy to mistype.
+
+Relegated clubs are left in the map on purpose: it costs nothing and keeps
+historical payloads joinable for backtests.
+
+---
+
 ## Cost, and the switch that controls most of it
 
 CloudWatch custom metrics were the largest line item in this account by a wide
