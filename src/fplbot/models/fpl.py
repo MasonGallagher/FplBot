@@ -452,11 +452,16 @@ class ScoringRules(DriftTolerantModel):
     ModelTunables with that caveat attached.
     """
 
-    goals_scored: dict[str, int] = Field(default_factory=dict)
-    assists: dict[str, int] = Field(default_factory=dict)
-    clean_sheets: dict[str, int] = Field(default_factory=dict)
-    goals_conceded: dict[str, int] = Field(default_factory=dict)
-    defensive_contribution: dict[str, int] = Field(default_factory=dict)
+    # Each of these is per-position ({"GKP": 10, "DEF": 6, ...}) *or* a single
+    # flat int once FPL decides a stat no longer varies by position - first
+    # observed 2026-07-28, when `assists` switched from a dict to a bare `3`.
+    # `bonus` and `saves` were already flat by the time this model was written;
+    # nothing says the rest won't follow, so all five take the same shape.
+    goals_scored: dict[str, int] | int | None = Field(default_factory=dict)
+    assists: dict[str, int] | int | None = Field(default_factory=dict)
+    clean_sheets: dict[str, int] | int | None = Field(default_factory=dict)
+    goals_conceded: dict[str, int] | int | None = Field(default_factory=dict)
+    defensive_contribution: dict[str, int] | int | None = Field(default_factory=dict)
     bonus: dict[str, int] | int | None = None
     saves: dict[str, int] | int | None = None
 

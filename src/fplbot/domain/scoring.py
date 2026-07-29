@@ -72,6 +72,18 @@ YELLOW_CARD_RATE = 0.12
 BASELINE_KEEPER_SAVES = 3.1
 
 
+def _by_position(rule: dict[str, int] | int | None, position: str) -> int | None:
+    """Read a ScoringRules value that may be per-position or a single flat int.
+
+    FPL has been known to collapse a per-position stat to one flat value (bonus
+    and saves always were; assists joined them on 2026-07-28). A flat value
+    applies to every position equally.
+    """
+    if isinstance(rule, dict):
+        return rule.get(position)
+    return rule
+
+
 @dataclass
 class ScoringContext:
     """Everything the scorer needs that is not the player or the fixture.
@@ -97,22 +109,20 @@ class ScoringContext:
     top_bps_elements: set[int] = field(default_factory=set)
 
     def goal_points(self, position: str) -> int:
-        return self.scoring_rules.goals_scored.get(position) or FALLBACK_GOAL_POINTS.get(
+        return _by_position(self.scoring_rules.goals_scored, position) or FALLBACK_GOAL_POINTS.get(
             position, 4
         )
 
     def clean_sheet_points(self, position: str) -> int:
-        return (
-            self.scoring_rules.clean_sheets.get(position)
-            if self.scoring_rules.clean_sheets
-            else None
+        return _by_position(
+            self.scoring_rules.clean_sheets, position
         ) or FALLBACK_CLEAN_SHEET_POINTS.get(position, 0)
 
     def assist_points(self, position: str) -> int:
-        return self.scoring_rules.assists.get(position) or POINTS_ASSIST
+        return _by_position(self.scoring_rules.assists, position) or POINTS_ASSIST
 
     def defcon_points(self, position: str) -> int:
-        return self.scoring_rules.defensive_contribution.get(position, 0)
+        return _by_position(self.scoring_rules.defensive_contribution, position) or 0
 
 
 # ---------------------------------------------------------------------------
