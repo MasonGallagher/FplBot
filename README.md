@@ -79,14 +79,17 @@ imports perfectly on your machine and fails inside Lambda with an error naming a
 ### Two phases, and why the second one is the important one
 
 The bot polls **hourly**, at seven minutes past, Europe/London. Every run takes a
-snapshot. Only runs that cross a notification threshold - 48 hours, 24 hours or
-3 hours before the deadline - send an email.
+snapshot. Only the first run inside **24 hours** of the deadline sends an email -
+one per gameweek, roughly 38 a season.
 
-The T-3h run is the one to act on, and this is not a detail. On the live injury
-table, **23 of 44 listed players are "Currently Being Assessed"** - over half.
-That status is precisely what a manager's press conference resolves, and pressers
-for a Saturday fixture land Thursday and Friday afternoon. T-48h for a Saturday
-11:00 deadline is **Thursday 11:00, before most of them**.
+That single report is the one to act on, because it is the only one. The trade is
+real and worth knowing: on the live injury table, **23 of 44 listed players are
+"Currently Being Assessed"** - over half. That status is precisely what a manager's
+press conference resolves, and pressers for a Saturday fixture land Thursday and
+Friday afternoon. T-24h for a Saturday 11:00 deadline is **Friday 11:00** - later
+than the old T-48h run and better informed for it, but ahead of some of those
+pressers, and nothing follows to correct them. Players in that state are counted
+in the caveats of every report so you can check them yourself.
 
 A single 48-hour run therefore guesses on the majority of its injury cases. The
 48h and 24h emails are labelled `PROVISIONAL` in a large amber banner; the 3h one

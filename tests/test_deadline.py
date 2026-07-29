@@ -89,47 +89,47 @@ class TestDueTier:
     @pytest.mark.parametrize(
         ("hours_remaining", "expected"),
         [
-            (72, None),  # outside every window
-            (49, None),  # just outside 48h
-            (47.5, "48h"),  # crossed 48h
-            (30, "48h"),  # still the loosest uncrossed tier
-            (23, "24h"),
-            (4, "24h"),
-            (2.5, "3h"),  # the one to act on
-            (0.5, "3h"),
+            (72, None),  # outside the window
+            (49, None),  # the old 48h tier no longer fires
+            (25, None),  # just outside 24h
+            (23.5, "24h"),  # crossed
+            (4, "24h"),  # still the only tier
+            (0.5, "24h"),  # right up to the deadline
         ],
     )
     def test_tier_selection(self, hours_remaining: float, expected: str | None) -> None:
         assert due_tier(int(hours_remaining * HOUR)) == expected
 
-    def test_returns_the_tightest_unsent_tier(self) -> None:
-        """A late run should send current advice, not replay a stale view.
+    def test_a_late_run_still_sends_once(self) -> None:
+        """A missed schedule must not mean a skipped gameweek.
 
-        If the 48h and 24h runs already fired and we are now at T-2h, the right
-        answer is the 3h tier - the one with the freshest team news - not a
-        repeat of the 48h picture.
+        With one tier there is nothing tighter to fall through to, so a run that
+        fires late still sends - the advice is simply closer to the deadline than
+        intended.
         """
-        assert due_tier(2 * HOUR, already_sent={"48h", "24h"}) == "3h"
+        assert due_tier(2 * HOUR) == "24h"
 
     def test_none_after_the_deadline(self) -> None:
         assert due_tier(-HOUR) is None
         assert due_tier(0) is None
 
     def test_respects_already_sent(self) -> None:
-        assert due_tier(int(1.5 * HOUR), already_sent={"48h", "24h", "3h"}) is None
+        """The whole point of one tier: exactly one email per deadline."""
+        assert due_tier(int(1.5 * HOUR), already_sent={"24h"}) is None
+        assert due_tier(int(23 * HOUR), already_sent={"24h"}) is None
 
 
 class TestPhase:
-    def test_only_the_three_hour_tier_is_confirmed(self) -> None:
-        """Phase 1 output is provisional and must be labelled as such.
+    def test_the_scheduled_tier_is_the_one_to_act_on(self) -> None:
+        """With a single notification there is no later report to defer to, so
+        'wait for the next one' stopped being advice we can give."""
+        assert is_confirmed_phase("24h") is True
 
-        At T-48h for a Saturday deadline - Thursday morning - most managers'
-        press conferences have not happened, and over half the injury table is
-        still 'Currently Being Assessed'.
-        """
-        assert is_confirmed_phase("3h") is True
-        assert is_confirmed_phase("24h") is False
+    def test_tiers_outside_the_window_stay_provisional(self) -> None:
+        """Only reachable via `force_tier`, and further from the deadline than a
+        scheduled run - so more team news is still to come."""
         assert is_confirmed_phase("48h") is False
+        assert is_confirmed_phase("3h") is False
 
     def test_tier_labels_are_stable(self) -> None:
         """The label is part of the idempotency key.
@@ -172,6 +172,8 @@ class TestDeadlineInfo:
     def test_within_window(self, bootstrap: Bootstrap) -> None:
         event = bootstrap.events[0]
 
-        assert DeadlineInfo(event, 47 * HOUR).within_window is True
-        assert DeadlineInfo(event, 49 * HOUR).within_window is False
+        assert DeadlineInfo(event, 23 * HOUR).within_window is True
+        # The window is derived from the tier list, so dropping to a single
+        # 24h tier narrowed it - 47h used to be inside it.
+        assert DeadlineInfo(event, 47 * HOUR).within_window is False
         assert DeadlineInfo(event, -HOUR).within_window is False

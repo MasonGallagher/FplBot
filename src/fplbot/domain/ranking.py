@@ -73,7 +73,7 @@ def assess_confidence(score: PlayerScore) -> Confidence:
     Confidence tracks *information quality*, not attractiveness. A player can be
     a superb pick with low confidence - a differential whose fitness is unclear -
     and the user needs to see those as two separate axes, because they imply
-    different actions: one is "buy", the other is "wait for the T-3h report".
+    different actions: one is "buy", the other is "check the presser first".
     """
     availability = score.availability
 
@@ -167,7 +167,7 @@ def warnings_for(score: PlayerScore) -> list[str]:
 
     if availability.awaiting_press_conference:
         out.append(
-            "Listed as 'Currently Being Assessed' - wait for the T-3h report before committing."
+            "Listed as 'Currently Being Assessed' - confirm the presser before committing."
         )
     if availability.conflicting_sources:
         out.append("Sources disagree on fitness: " + ", ".join(availability.conflicting_sources))

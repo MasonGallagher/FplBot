@@ -10,9 +10,8 @@ a deadline approaching.
 | When | What happens |
 |---|---|
 | Every hour, `:07` London | Poll runs, snapshots, usually exits `snapshot_only` |
-| T-48h | Email, labelled `PROVISIONAL` |
-| T-24h | Email, labelled `PROVISIONAL` |
-| T-3h | Email, labelled `CONFIRMED` - **the one to act on** |
+| T-24h | Email, labelled `CONFIRMED` - the only report for the deadline |
+| T-24h to deadline | Every later run finds the lock taken, exits `suppressed` |
 | Tuesday `03:17` London | Backfill runs, ~120 players |
 | Off-season | Snapshots daily, notifies never, exits `no_deadline` |
 

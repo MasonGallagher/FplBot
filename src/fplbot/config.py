@@ -36,12 +36,23 @@ USER_AGENT = f"fplBot/1.0 (personal, non-commercial; +{CONTACT_URL})"
 # All deadline arithmetic is integer seconds against `deadline_time_epoch`.
 # Never date arithmetic - that is how DST bugs get in. SPEC section 3.
 HOUR = 3600
-NOTIFY_TIERS_SECONDS: tuple[int, ...] = (48 * HOUR, 24 * HOUR, 3 * HOUR)
+# One notification per deadline, at T-24h. This was 48h/24h/3h, which produced
+# three emails per gameweek - around 114 a season - and the earlier two were
+# mostly superseded by the last.
+#
+# The trade is real and worth naming: T-3h was the tier with the best team news,
+# because managers' press conferences for a Saturday fixture land Thursday and
+# Friday afternoon. At T-24h (Friday morning for a Saturday 11:00 deadline) some
+# of those have happened and some have not, so a proportion of the injury table
+# is still unresolved when this report goes out. `awaiting_press_conference` in
+# the caveats is what carries that uncertainty now, and it is no longer
+# suppressed on the confirmed tier - nothing arrives later to resolve it.
+NOTIFY_TIERS_SECONDS: tuple[int, ...] = (24 * HOUR,)
 
-# The tier we consider "confirmed" rather than "provisional". Team news from
-# managers' press conferences has landed by T-3h; at T-48h more than half the
-# injury table is still "Currently Being Assessed". SPEC section 3, phase 2.
-CONFIRMED_TIER_SECONDS = 3 * HOUR
+# The tier we consider "confirmed" rather than "provisional". With a single tier
+# there is no later report to defer to, so the one we send is by definition the
+# one to act on - "wait for the next one" stopped being available advice.
+CONFIRMED_TIER_SECONDS = 24 * HOUR
 
 # Refuse to send transfer advice built on data older than this. Past the ceiling
 # we email about the *failure* instead. SPEC section 6.2.

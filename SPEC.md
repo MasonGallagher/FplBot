@@ -44,7 +44,7 @@ them.
 ## 1. Scope
 
 **In scope (v1):**
-- Detect that the next deadline is within 48h; act; and again at T−3h.
+- Detect that the next deadline is within 24h and act, once.
 - Ingest FPL official API + third-party stats, odds, injury and predicted-lineup data.
 - Score every player, produce a ranked **buy board** and a **sell/avoid list**.
 - Email the result.
@@ -119,19 +119,25 @@ Offset to `:07` to avoid the top-of-hour herd and let FPL's 5-minute CDN cache s
 Polling faster than 5 minutes is **pure waste** — FPL's edge TTL is 300s, so you
 will get byte-identical cached responses and a spurious velocity of zero.
 
-**Phase 2 — confirmation run at T−3h.**
+**Phase 2 — a single notification at T−24h.**
 
-This is not optional polish. On the live injury table, **23 of 44 listed players are
-"Currently Being Assessed"** — over half. That status is what a manager's press
-conference resolves. Pressers for a Saturday fixture land Thursday–Friday afternoon;
-T−48h for a Saturday 11:00 deadline is **Thursday 11:00, before most of them**.
+This started as three tiers (48h, 24h, 3h) with T−3h as the confirmation run, which
+produced three emails per gameweek and roughly 114 a season. It is now **one email
+per deadline, at T−24h**, and the cost of that is worth stating rather than burying.
 
-A single 48h run therefore guesses on the majority of its injury cases. Phase 2
-re-polls only the fast-moving sources (FPL bootstrap, PremierInjuries, FFS lineups,
-goalscorer odds) and re-solves if anything material changed. **Phase 2's output is
-the one the user should act on**; Phase 1 is provisional and must be labelled as such.
+On the live injury table, **23 of 44 listed players are "Currently Being Assessed"** —
+over half. That status is what a manager's press conference resolves, and pressers for
+a Saturday fixture land Thursday–Friday afternoon. T−24h for a Saturday 11:00 deadline
+is **Friday 11:00**: later than the old T−48h run, so materially better informed, but
+earlier than some of those pressers. A proportion of the injury table is therefore
+still unresolved when the report goes out, and **nothing follows to correct it**.
 
-**Notification tiers:** 48h, 24h, 3h. Idempotency via a DynamoDB conditional write on
+That uncertainty is carried explicitly instead of being hidden: the
+`awaiting_press_conference` count is a caveat on every report — no longer suppressed
+on the confirmed tier, because there is no later report to defer it to — and per-player
+warnings say to confirm the presser rather than to wait for a run that will not come.
+
+**Notification tier:** 24h. Idempotency via a DynamoDB conditional write on
 `NOTIFY#{season}#{gw}#{tier}` with `ConditionExpression="attribute_not_exists(pk)"`.
 Key on gameweek and tier, **never on wall-clock time**, so Scheduler retries, manual
 re-invokes and at-least-once delivery are all safe.
@@ -589,7 +595,7 @@ overall average. **A model that cannot beat `ep_next` is not worth shipping.**
 
 Sections, in order:
 1. **Header** — gameweek, deadline, hours remaining, **phase (provisional at 48h vs
-   confirmed at T−3h)**, and a data-quality line naming any degraded source.
+   the only report for this deadline)**, and a data-quality line naming any degraded source.
 2. **Buy board** — ranked by position, each with: xP, ceiling/floor, price, ownership,
    availability risk, **confidence**, **a one-line "why"**, and a **runner-up**.
 3. **Sell / avoid** — players with elevated availability risk, adverse fixtures, or

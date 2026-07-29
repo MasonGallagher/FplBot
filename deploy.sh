@@ -580,9 +580,10 @@ ${BOLD}${GREEN}Deployment complete.${RESET}
 
 ${BOLD}What happens now${RESET}
   The poll function runs hourly at 7 minutes past, Europe/London. Every run
-  snapshots FPL's data. When a deadline comes within 48h, 24h or 3h it also
-  emails a board. The T-3h report is the one to act on - the earlier ones fire
-  before most managers' press conferences.
+  snapshots FPL's data. When a deadline comes within 24h it also emails a board -
+  one email per gameweek, roughly three a week less than the old 48h/24h/3h
+  scheme. Some managers' press conferences land after it, so players marked
+  'Currently Being Assessed' are flagged in the caveats for you to check.
 
 ${BOLD}Useful commands${RESET}
   Invoke now:      aws lambda invoke --function-name ${STACK_PREFIX}-poll-${ENVIRONMENT} --region ${AWS_REGION} /dev/stdout

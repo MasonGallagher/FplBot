@@ -314,18 +314,22 @@ def _masthead(context: RunContext) -> str:
 def _status_strip(context: RunContext) -> str:
     """Phase banner and data-quality line.
 
-    Phase 1 output is provisional and must be labelled as such: at T-48h most
-    managers' press conferences have not happened, and over half the injury table
-    is still "Currently Being Assessed". Phase 2 at T-3h is the one to act on.
+    The scheduled T-24h run is the only report for a deadline, so it is labelled
+    as the one to act on. Anything else - a `force_tier` invocation from outside
+    the window - is labelled provisional, because it is further out and more team
+    news is still to come.
     """
     is_confirmed = context.is_confirmed_phase
     colour = COLOURS["confirmed"] if is_confirmed else COLOURS["provisional"]
     soft = COLOURS["confirmed_soft"] if is_confirmed else COLOURS["provisional_soft"]
     label = "CONFIRMED" if is_confirmed else "PROVISIONAL"
+    # No "a confirmed report follows" on the provisional branch any more: with a
+    # single T-24h notification there is no later report to wait for, and
+    # promising one that never arrives is worse than saying nothing.
     banner = (
-        "this is the report to act on"
+        "the only report for this deadline - act on it"
         if is_confirmed
-        else "team news is still moving; a confirmed report follows at T-3h"
+        else "sent outside the usual notification window; team news may still move"
     )
 
     quality = context.data_quality
@@ -866,9 +870,9 @@ def _caveats(quality: DataQuality, context: RunContext) -> str:
 
     if not context.is_confirmed_phase:
         items.append(
-            "This is a provisional report. Managers' press conferences for a weekend "
-            "fixture typically land Thursday and Friday afternoon, after this run. "
-            "The T-3h report will resolve most of the outstanding fitness questions."
+            "This report was produced outside the usual T-24h notification window, so it "
+            "is further from the deadline than a scheduled run and more team news is "
+            "still to come."
         )
 
     if not context.season_has_started:

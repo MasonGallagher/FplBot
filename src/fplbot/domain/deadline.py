@@ -29,8 +29,11 @@ from fplbot.config import CONFIRMED_TIER_SECONDS, NOTIFY_TIERS_SECONDS
 from fplbot.models.fpl import Bootstrap, Event
 from fplbot.observability import logger
 
-# The outermost tier. Beyond this we snapshot but do not notify.
-WINDOW_SECONDS = 48 * 3600
+# The outermost tier. Beyond this we snapshot but do not notify. Derived rather
+# than written out, because a hardcoded window that disagrees with the tier list
+# fails silently in the worse direction: too small and the loosest tier can never
+# fire at all.
+WINDOW_SECONDS = max(NOTIFY_TIERS_SECONDS)
 
 
 @dataclass(frozen=True)
@@ -105,9 +108,9 @@ def next_deadline(bootstrap: Bootstrap, now_epoch: int) -> DeadlineInfo | None:
 def due_tier(seconds_remaining: int, already_sent: set[str] | None = None) -> str | None:
     """Which notification tier, if any, this run should fire.
 
-    Tiers are 48h, 24h and 3h. A run "crosses" a tier when the remaining time has
-    dropped at or below that tier's threshold. Because we poll hourly, a run at
-    T-47h has crossed the 48h tier; a run at T-2h has crossed all three.
+    There is one tier, 24h. A run "crosses" it when the remaining time has dropped
+    at or below the threshold, so with hourly polling the first run inside T-24h
+    fires and every later one finds the lock already taken.
 
     We return the **tightest** tier crossed and not yet sent, so a run that fires
     late (a missed schedule, a manual invoke at T-4h) sends the most current
@@ -145,15 +148,17 @@ def tier_label(threshold_seconds: int) -> str:
 def is_confirmed_phase(tier: str) -> bool:
     """Whether this tier is the one the user should act on.
 
-    Phase 1 (48h/24h) is provisional and must be labelled as such. At T-48h for a
-    Saturday 11:00 deadline - that is Thursday 11:00 - most managers' press
-    conferences have not happened yet, and on the live injury table more than
-    half of the listed players are "Currently Being Assessed", a status those
-    press conferences exist to resolve. A single 48h run therefore guesses on the
-    majority of its injury cases.
+    With a single T-24h notification the answer is yes for the scheduled tier and
+    no for anything else, which in practice means a `force_tier` invocation from
+    outside the window. "Wait for the next report" is no longer advice we can
+    give, so the scheduled run is by definition the actionable one.
 
-    Phase 2 at T-3h re-polls the fast-moving sources and is the output to act on.
-    SPEC section 3.
+    This does mean acting on less team news than the old T-3h tier had. For a
+    Saturday 11:00 deadline T-24h is Friday 11:00: some managers' press
+    conferences have happened by then and some have not, and the ones that have
+    not leave players sitting at "Currently Being Assessed" with nothing later to
+    resolve them. That uncertainty is surfaced in the caveats rather than being
+    hidden behind a phase label. SPEC section 3.
     """
     return tier == tier_label(CONFIRMED_TIER_SECONDS)
 

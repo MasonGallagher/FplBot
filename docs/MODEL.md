@@ -295,7 +295,7 @@ blank gameweek (zero points, with certainty), availability risk at or above 0.95
 
 A player can be a superb pick with low confidence - a differential whose fitness
 is unclear. The reader needs both, because they imply different actions: one is
-"buy", the other is "wait for the T-3h report".
+"buy", the other is "check the presser before committing".
 
 Confidence tracks *information quality*: sources disagreeing, an unresolved
 "Currently Being Assessed", a provisional kickoff time, or a distribution too wide

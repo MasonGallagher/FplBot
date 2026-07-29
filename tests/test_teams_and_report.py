@@ -136,17 +136,15 @@ class TestRendering:
             assert heading in html
 
     def test_provisional_phase_is_prominent(self) -> None:
-        """Phase 1 output must be labelled as such.
-
-        It fires before most managers' press conferences, when over half the
-        injury table is still 'Currently Being Assessed'.
-        """
+        """Only reachable via `force_tier` now that there is a single scheduled
+        tier, and it must not promise a follow-up report that never arrives."""
         board = Board({}, [], [], [])
 
         html = render_html(a_context(confirmed=False), board)
 
         assert "PROVISIONAL" in html
-        assert "T-3h" in html
+        assert "team news may still move" in html
+        assert "T-3h" not in html, "there is no later report to defer to"
 
     def test_confirmed_phase_says_act_on_this(self) -> None:
         board = Board({}, [], [], [])

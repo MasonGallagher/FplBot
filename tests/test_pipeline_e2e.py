@@ -224,23 +224,27 @@ class TestFullRun:
     def test_produces_and_sends_a_board(self, wired) -> None:
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
 
         assert outcome.status == "sent"
         assert outcome.gameweek == 1
-        assert outcome.tier == "48h"
+        assert outcome.tier == "24h"
         assert outcome.recommendations > 0
 
         assert len(wired["email"].sent) == 1
         message = wired["email"].sent[0]
         assert "GW1" in message["subject"]
-        assert "provisional" in message["subject"]
+        # The scheduled tier is the only report for this deadline, so it is
+        # marked FINAL. It read "provisional" when this ran on the 48h tier and a
+        # T-3h report was still to come.
+        assert "FINAL" in message["subject"]
+        assert "T-24h" in message["subject"]
 
     @respx.mock
     def test_the_email_carries_every_section(self, wired) -> None:
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
         html = wired["email"].sent[0]["html"]
 
         for heading in (
@@ -263,7 +267,7 @@ class TestFullRun:
         """
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
         html = wired["email"].sent[0]["html"]
 
         assert outcome.status == "sent"
@@ -273,19 +277,24 @@ class TestFullRun:
     def test_the_report_is_archived(self, wired) -> None:
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
 
         assert wired["archive"].reports
         assert wired["archive"].objects, "raw payloads should be archived too"
 
     @respx.mock
-    def test_the_three_hour_report_is_marked_confirmed(self, wired) -> None:
-        """The one the user should act on."""
+    def test_the_scheduled_report_is_marked_confirmed(self, wired) -> None:
+        """The only report for the deadline, so it is the one to act on.
+
+        A late run - here T-2h, after a missed schedule - still carries the 24h
+        tier and is still marked confirmed. There is nothing tighter to fall
+        through to.
+        """
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
         outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 2 * HOUR)
 
-        assert outcome.tier == "3h"
+        assert outcome.tier == "24h"
         assert "FINAL" in wired["email"].sent[0]["subject"]
         assert "CONFIRMED" in wired["email"].sent[0]["html"]
 
@@ -300,23 +309,28 @@ class TestIdempotency:
         future one, so the conditional write is the guard."""
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        first = pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
-        second = pipeline.run(now_epoch=DEADLINE_EPOCH - 46 * HOUR)
+        first = pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
+        second = pipeline.run(now_epoch=DEADLINE_EPOCH - 19 * HOUR)
 
         assert first.status == "sent"
         assert second.status == "suppressed"
         assert len(wired["email"].sent) == 1
 
     @respx.mock
-    def test_a_different_tier_still_sends(self, wired) -> None:
-        """The lock is per (gameweek, tier), not per gameweek."""
+    def test_exactly_one_email_per_deadline(self, wired) -> None:
+        """The point of collapsing to a single tier.
+
+        Every hourly run from T-24h down to the deadline crosses the same tier,
+        so the first takes the lock and the rest are suppressed. Previously these
+        offsets straddled the 48h and 24h tiers and produced two emails.
+        """
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)  # 48h
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)  # 24h
+        for offset in (23, 20, 12, 4, 1):
+            pipeline.run(now_epoch=DEADLINE_EPOCH - offset * HOUR)
 
-        assert len(wired["email"].sent) == 2
-        assert wired["store"].locks == {(1, "48h"), (1, "24h")}
+        assert len(wired["email"].sent) == 1
+        assert wired["store"].locks == {(1, "24h")}
 
     @respx.mock
     def test_force_tier_still_respects_the_lock(self, wired) -> None:
@@ -340,7 +354,7 @@ class TestHardFailures:
         respx.get(f"{FPL_BASE}/bootstrap-static/").mock(return_value=httpx.Response(503))
 
         with pytest.raises(RuntimeError, match="Required source"):
-            pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+            pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
 
     @respx.mock
     def test_the_updating_page_is_rejected(self, wired) -> None:
@@ -359,7 +373,7 @@ class TestHardFailures:
         )
 
         with pytest.raises(RuntimeError, match="Required source"):
-            pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+            pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
 
     @respx.mock
     def test_bootstrap_falls_back_to_last_known_good(self, wired) -> None:
@@ -369,7 +383,7 @@ class TestHardFailures:
 
         respx.get(f"{FPL_BASE}/bootstrap-static/").mock(return_value=httpx.Response(503))
 
-        outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
 
         assert outcome.status == "sent"
         html = wired["email"].sent[0]["html"]
@@ -388,7 +402,7 @@ class TestNewSectionsEndToEnd:
     def test_captain_picks_reach_the_email(self, wired) -> None:
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
         html = wired["email"].sent[0]["html"]
 
         assert "Captain picks" in html
@@ -399,7 +413,7 @@ class TestNewSectionsEndToEnd:
         """The synthetic bootstrap has enough players for a legal squad."""
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
         html = wired["email"].sent[0]["html"]
 
         assert "Best wildcard squad" in html
@@ -410,7 +424,7 @@ class TestNewSectionsEndToEnd:
         """Guards the constraint through the real data path, not just the unit test."""
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
         html = wired["email"].sent[0]["html"]
 
         # Every money figure the squad section renders - spend and bank alike -
@@ -424,7 +438,7 @@ class TestNewSectionsEndToEnd:
     def test_the_text_part_carries_both_sections(self, wired) -> None:
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
         text = wired["email"].sent[0]["text"]
 
         assert "CAPTAIN PICKS" in text
