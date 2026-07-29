@@ -6,7 +6,7 @@ Free tier is **500 credits per month**, and one credit is charged per region per
 market. That is a hard budget and it is easy to blow through in a single careless
 run, so the request plan is fixed and explicit:
 
-    1 x /odds?regions=uk&markets=h2h_3_way,totals    =  2 credits  (all fixtures)
+    1 x /odds?regions=uk&markets=h2h,totals          =  2 credits  (all fixtures)
     1 x /events                                      =  1
    10 x /events/{id}/odds?markets=player_goal_scorer_anytime = 10
                                              total   = 13 credits per run
@@ -14,9 +14,17 @@ run, so the request plan is fixed and explicit:
 
 Two rules keep it there:
 
+* **The 1X2 market key is `h2h`, not `h2h_3_way`.** This is worth stating because
+  the name is misleading: `h2h` reads like a two-way market, and `h2h_3_way`
+  reads like the soccer one. The API disagrees - requesting `h2h_3_way` here
+  returns
+  `422 {"error_code":"INVALID_MARKET","message":"Markets not supported by this
+  endpoint: h2h_3_way"}`, and every odds fetch failed that way. For soccer,
+  `h2h` already returns three outcomes: home, away and `"Draw"`.
+
 * **Use exactly one region.** `regions=uk,eu,us` triples the cost for near
   identical prices. There is no third-region edge worth 2x the quota.
-* **Pull `totals` and `h2h_3_way` from the cheap featured endpoint**, which
+* **Pull `totals` and `h2h` from the cheap featured endpoint**, which
   returns all ten matches for 2 credits. Fetching them per event would cost 30.
 
 Player props are the expensive part because they are only available per event -
@@ -108,7 +116,7 @@ def fetch_odds(context: SourceContext, api_key: str | None) -> SourceResult[Odds
             params={
                 "apiKey": api_key,
                 "regions": REGION,
-                "markets": "h2h_3_way,totals",
+                "markets": "h2h,totals",
                 "oddsFormat": "decimal",
             },
         )
@@ -239,7 +247,7 @@ def _parse_featured(payload: list[dict[str, Any]]) -> list[MatchOdds]:
             for market in bookmaker.get("markets", []):
                 key = market.get("key")
                 outcomes = {o.get("name"): o.get("price") for o in market.get("outcomes", [])}
-                if key == "h2h_3_way" and odds.home_win is None:
+                if key == "h2h" and odds.home_win is None:
                     odds.home_win = outcomes.get(odds.home_team)
                     odds.away_win = outcomes.get(odds.away_team)
                     odds.draw = outcomes.get("Draw")

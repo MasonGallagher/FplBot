@@ -17,6 +17,7 @@ from fplbot.domain.teams import canonical_team
 from fplbot.http.client import HttpClient, HttpFetchError
 from fplbot.sources.clubelo import _parse_fixture_row
 from fplbot.sources.ffs import PHOTO_CODE_PATTERN, parse_lineups
+from fplbot.sources.oddsapi import _parse_featured, match_probabilities
 from fplbot.sources.premierinjuries import parse_injury_table, parse_uk_date
 from fplbot.sources.understat import UnderstatData, _coerce_teams, _to_float, forecast_probabilities
 
@@ -408,3 +409,90 @@ class TestClubElo:
 
     def test_rows_without_teams_are_skipped(self) -> None:
         assert _parse_fixture_row({"R:0-0": "0.5"}) is None
+
+
+# ---------------------------------------------------------------------------
+# The Odds API
+# ---------------------------------------------------------------------------
+class TestOddsApiFeaturedMarket:
+    """The 1X2 market key is `h2h`, not `h2h_3_way`.
+
+    The naming is genuinely misleading - `h2h` reads like a two-way market and
+    `h2h_3_way` reads like the soccer one - so this is pinned against a payload
+    shaped exactly like the live response. Requesting `h2h_3_way` returns
+    422 INVALID_MARKET, which meant every odds fetch failed and the report fell
+    back to ClubElo without the market anchor on goal probabilities.
+    """
+
+    pass
+
+
+ODDS_PAYLOAD = [
+    {
+        "id": "eb2553d1",
+        "sport_key": "soccer_epl",
+        "commence_time": "2026-08-21T19:00:00Z",
+        "home_team": "Arsenal",
+        "away_team": "Coventry City",
+        "bookmakers": [
+            {
+                "key": "betfair",
+                "markets": [
+                    {
+                        "key": "h2h",
+                        "outcomes": [
+                            {"name": "Arsenal", "price": 1.30},
+                            {"name": "Coventry City", "price": 11.0},
+                            {"name": "Draw", "price": 6.0},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+]
+
+
+class TestOddsApiParsing:
+    def test_the_three_way_prices_are_read(self) -> None:
+        [odds] = _parse_featured(ODDS_PAYLOAD)
+
+        assert odds.home_win == 1.30
+        assert odds.away_win == 11.0
+        assert odds.draw == 6.0
+
+    def test_probabilities_come_out_devigged(self) -> None:
+        """Bookmaker prices carry margin; the implied probabilities must sum to
+        one after devigging, not to the overround."""
+        [odds] = _parse_featured(ODDS_PAYLOAD)
+
+        probabilities = match_probabilities(odds)
+
+        assert probabilities is not None
+        assert sum(probabilities) == pytest.approx(1.0)
+        home, _draw, away = probabilities
+        assert home > away, "the 1.30 favourite must be likeliest"
+
+    def test_the_old_market_key_no_longer_parses(self) -> None:
+        """Guards the regression directly: if someone restores `h2h_3_way`,
+        the request 422s and nothing is read."""
+        stale = [dict(ODDS_PAYLOAD[0])]
+        stale[0]["bookmakers"] = [
+            {
+                "key": "betfair",
+                "markets": [
+                    {
+                        "key": "h2h_3_way",
+                        "outcomes": [
+                            {"name": "Arsenal", "price": 1.30},
+                            {"name": "Coventry City", "price": 11.0},
+                            {"name": "Draw", "price": 6.0},
+                        ],
+                    }
+                ],
+            }
+        ]
+
+        [odds] = _parse_featured(stale)
+
+        assert odds.home_win is None
