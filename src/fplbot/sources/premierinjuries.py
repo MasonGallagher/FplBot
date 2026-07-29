@@ -157,7 +157,23 @@ def parse_injury_table(html: str) -> InjuryData:
     for heading in tree.css("tr.heading"):
         team_id = heading.attributes.get("data-team-id")
         if team_id:
-            team_names[team_id] = _clean_text(heading)
+            # Read the name cell, NOT the whole row. The heading also carries a
+            # "track this team" control:
+            #
+            #   <div class="injury-table-th">
+            #     <div class="injury-team">AFC Bournemouth</div>
+            #     <div class="table-actions">... TRACK ...</div>
+            #
+            # so the row's text is "AFC BournemouthTRACK1". That resolved to no
+            # FPL team for ANY club, which silently dropped the team hint from
+            # every injury row - and the team hint is what keeps player matching
+            # from having to guess between similar names at different clubs.
+            #
+            # `.injury-team` first, with the generic cleaner as a fallback that
+            # now also strips `.table-actions`, so a markup change costs accuracy
+            # rather than correctness.
+            name_node = heading.css_first("div.injury-team") or heading
+            team_names[team_id] = _clean_text(name_node)
 
     # The column order is defined by the repeated `tr.sub-head` row. We build a
     # label -> index map from it rather than hardcoding indices, so a new column
@@ -268,6 +284,9 @@ def _clean_text(node) -> str:
         return ""
     for label in node.css("div.mob-title"):
         label.decompose()
+    # Interactive controls carry visible text ("TRACK") that is chrome, not data.
+    for actions in node.css("div.table-actions"):
+        actions.decompose()
     return " ".join((node.text() or "").split())
 
 
