@@ -20,9 +20,20 @@
 
 httpx==0.27.2                 # HTTP/2-capable client with a pluggable transport (respx mocks it)
 pydantic==2.9.2               # schema validation with extra="allow" for drift tolerance
-orjson==3.10.7                # fastest JSON parse; matters on the 3 MB bootstrap payload
-numpy==2.1.2                  # Monte Carlo sampling. ~18 MB on arm64, earns its place.
-selectolax==0.3.21            # Lexbor HTML parser. ~10x faster and far smaller than lxml.
+orjson==3.10.10                # fastest JSON parse; matters on the 3 MB bootstrap payload
+                                # 3.10.7-3.10.9 ship no manylinux/glibc wheel for cp313 on aarch64,
+                                # only musllinux + macOS - pip falls back to compiling the Rust
+                                # source under QEMU emulation in `sam build --use-container`,
+                                # which can take an hour instead of seconds. 3.10.10 is the
+                                # first release with the missing wheel.
+numpy==2.1.2                   # Monte Carlo sampling. ~18 MB on arm64, earns its place.
+selectolax==0.3.24              # Lexbor HTML parser. ~10x faster and far smaller than lxml.
+                                # 0.3.21 has no cp313 wheel and fails to compile against 3.13's
+                                # changed C API. 0.3.23 is the first release with a cp313 wheel
+                                # at all, but only for x86_64/macOS/Windows - no aarch64 wheel of
+                                # any kind, so it compiles Lexbor's C sources under QEMU emulation
+                                # in `sam build --use-container`. 0.3.24 is the first release
+                                # with a manylinux aarch64 cp313 wheel.
 rapidfuzz==3.10.0             # fuzzy name matching fallback (token_set_ratio)
 aws-lambda-powertools==3.2.0  # structured logging, EMF metrics, tracing
 # Powertools' Tracer imports this lazily but unconditionally. The SAM template

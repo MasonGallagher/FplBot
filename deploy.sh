@@ -26,6 +26,12 @@
 
 set -euo pipefail
 
+# Some SAM CLI 1.164.0 builds crash *after* a successful build while gathering
+# telemetry (FileNotFoundError in samcli/lib/telemetry/project_metadata.py's
+# get_project_name), turning a working build into a non-zero exit. Telemetry
+# is opt-out and this sidesteps the crash entirely.
+export SAM_CLI_TELEMETRY="${SAM_CLI_TELEMETRY:-0}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -77,6 +83,22 @@ TEST_ONLY="false"
 GUIDED="false"
 USE_CONTAINER="true"
 
+# ---------------------------------------------------------------------------
+# Build directory
+# ---------------------------------------------------------------------------
+# Default: build in place, next to the template, like `sam build` normally does.
+BUILD_DIR="${SCRIPT_DIR}/.aws-sam/build"
+if [[ "$SCRIPT_DIR" == /mnt/*/* ]]; then
+  # Under WSL2, /mnt/* is the Windows drive mounted over the 9p protocol, which
+  # has a well-known bulk-delete race: `sam build` removes the build directory
+  # before every build, and deleting a tree with thousands of small files (the
+  # numpy test suite is the classic trigger) intermittently raises "Directory
+  # not empty" mid-rmtree. Building on WSL2's native ext4 instead sidesteps it
+  # entirely and is also several times faster. Source stays on the Windows
+  # drive - only the churny build output moves.
+  BUILD_DIR="${HOME}/.cache/sam-builds/${STACK_PREFIX}"
+fi
+
 usage() {
   sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
   cat <<'EOF'
@@ -102,10 +124,11 @@ EOF
 # ---------------------------------------------------------------------------
 # Arguments
 # ---------------------------------------------------------------------------
+REGION_FROM_CLI=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env)          ENVIRONMENT="$2"; shift 2 ;;
-    --region)       AWS_REGION="$2"; shift 2 ;;
+    --region)       AWS_REGION="$2"; REGION_FROM_CLI="$2"; shift 2 ;;
     --pipeline)     DO_PIPELINE="true"; shift ;;
     --delete)       DO_DELETE="true"; shift ;;
     --test-only)    TEST_ONLY="true"; shift ;;
@@ -188,6 +211,11 @@ EOF
 if [[ -f "$ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   set -a; source "$ENV_FILE"; set +a
+  # .env is sourced after argument parsing (create_env_file below needs
+  # DO_DELETE/TEST_ONLY from the parsed flags), which means it would otherwise
+  # silently clobber an explicit --region. A flag on the command line always
+  # wins over the stored default.
+  [[ -n "$REGION_FROM_CLI" ]] && AWS_REGION="$REGION_FROM_CLI"
 elif [[ "$DO_DELETE" == "false" && "$TEST_ONLY" == "false" ]]; then
   create_env_file
 fi
@@ -301,9 +329,18 @@ verify_ses_identities() {
       ok "$address verified"
     else
       if [[ "$status" == "MISSING" ]]; then
-        info "Creating SES identity for $address..."
-        aws sesv2 create-email-identity --email-identity "$address" \
-          --region "$AWS_REGION" >/dev/null 2>&1 || true
+        if [[ "$address" == "$EMAIL_FROM" ]]; then
+          # The stack's SenderIdentity resource (template.yaml) owns this one -
+          # creating it here too means CloudFormation later tries to Add an
+          # identity that already exists, which fails changeset creation with
+          # AWS::EarlyValidation::ResourceExistenceCheck. Let the stack create
+          # it; this is just a status check for the sender address.
+          info "$address will be created by the stack's SenderIdentity resource"
+        else
+          info "Creating SES identity for $address..."
+          aws sesv2 create-email-identity --email-identity "$address" \
+            --region "$AWS_REGION" >/dev/null 2>&1 || true
+        fi
       fi
       pending+=("$address")
       warn "$address is NOT verified - AWS has emailed a confirmation link"
@@ -327,7 +364,9 @@ verify_ses_identities() {
 build_application() {
   step "Building"
 
-  local build_args=(--template template.yaml --parallel)
+  mkdir -p "$(dirname "$BUILD_DIR")"
+
+  local build_args=(--template template.yaml --parallel --build-dir "$BUILD_DIR")
   if [[ "$USE_CONTAINER" == "true" ]]; then
     # Builds each function and layer inside a container matching the Lambda
     # runtime, so compiled wheels are the right architecture and libc. Slower,
@@ -340,9 +379,9 @@ build_application() {
   # Guard the 250 MB unzipped budget across function plus layers. Catching this
   # here gives you a number and a hint; catching it at deploy time gives you a
   # rejected upload after a long wait.
-  if [[ -d ".aws-sam/build/DependencyLayer" ]]; then
+  if [[ -d "${BUILD_DIR}/DependencyLayer" ]]; then
     local size_mb
-    size_mb="$(du -sm .aws-sam/build/DependencyLayer | cut -f1)"
+    size_mb="$(du -sm "${BUILD_DIR}/DependencyLayer" | cut -f1)"
     info "Dependency layer: ${size_mb} MB unzipped (Lambda's limit is 250 MB total)"
     if [[ "$size_mb" -gt 220 ]]; then
       die "The layer is ${size_mb} MB, leaving under 30 MB of headroom.
@@ -361,7 +400,8 @@ deploy_application() {
   step "Deploying ${STACK_NAME} to ${AWS_REGION}"
 
   if [[ "$GUIDED" == "true" ]]; then
-    sam deploy --guided --stack-name "$STACK_NAME" --region "$AWS_REGION"
+    sam deploy --guided --template-file "${BUILD_DIR}/template.yaml" \
+      --stack-name "$STACK_NAME" --region "$AWS_REGION"
     return
   fi
 
@@ -379,6 +419,7 @@ deploy_application() {
   )
 
   sam deploy \
+    --template-file "${BUILD_DIR}/template.yaml" \
     --stack-name "$STACK_NAME" \
     --region "$AWS_REGION" \
     --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
@@ -534,7 +575,7 @@ ${BOLD}Useful commands${RESET}
   Force an email:  aws lambda invoke --function-name ${STACK_PREFIX}-poll-${ENVIRONMENT} --region ${AWS_REGION} \\
                      --cli-binary-format raw-in-base64-out --payload '{"force_tier":"48h"}' /dev/stdout
   Tail logs:       sam logs --stack-name ${STACK_NAME} --region ${AWS_REGION} --tail
-  Local run:       sam local invoke PollFunction --event events/scheduled.json
+  Local run:       sam local invoke PollFunction --event events/scheduled.json --template-file ${BUILD_DIR}/template.yaml
 
 ${BOLD}Before the first real send${RESET}
   1. Confirm the SES verification emails (check spam).

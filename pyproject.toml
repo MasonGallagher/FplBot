@@ -16,6 +16,8 @@ dev = [
     "respx>=0.21",              # httpx transport mocking - tests never touch live APIs
     "ruff>=0.6",
     "mypy>=1.11",
+    "boto3>=1.35",               # the Lambda runtime supplies this in prod (see requirements.txt);
+                                  # tests need a real import locally since nothing else provides it
     "types-boto3[dynamodb,s3,ses]>=1.35",
 ]
 
