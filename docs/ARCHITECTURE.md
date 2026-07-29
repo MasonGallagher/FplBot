@@ -45,8 +45,9 @@ function. What happens next:
      10.    +--> score every player (Monte Carlo) -> Distribution
      11.    +--> project the season (neutral fixture x fixture load)
      12.    +--> rank: buy board, captains, wildcard squad -> Board
-     13.    +--> render HTML + text
-     14.    +--> archive to S3, send via SES
+     13.    +--> benchmark vs ep_next; STORE PREDICTIONS for later grading
+     14.    +--> render HTML + text
+     15.    +--> archive to S3, send via SES
 ```
 
 Steps 1-5 are cheap and always run. Step 6 onwards is the expensive half, and it
@@ -130,15 +131,22 @@ the poll function's 120-second timeout. The backfill gets its own function with 
 
 ### DynamoDB, single table, on-demand
 
-One table, five item types, distinguished by the `pk` prefix:
+One table, six item types, distinguished by the `pk` prefix:
 
 | Purpose | pk | sk |
 |---|---|---|
 | Bootstrap snapshot (gzipped) | `SNAP#{season}` | `{iso8601}` |
 | Per-player series | `PLAYER#{season}#{element}` | `{iso8601}` |
 | Notification lock | `NOTIFY#{season}#{gw}#{tier}` | `LOCK` |
+| Stored predictions (gzipped) | `PRED#{season}#{gw}` | `{tier}` |
 | Last-known-good pointer | `LKG#{season}` | `{source}` |
 | Resolved id alias | `ALIAS#{source}` | `{source_id}` |
+
+Predictions are the one item type keyed on neither a timestamp nor a source, and
+for the same reason as the notification lock: the question asked of them later is
+always "what did we say about GW7?", never "what did we say at 14:07". The sort
+key is the tier, so the T-24h and T-3h boards are graded separately - which is
+the entire reason to keep both.
 
 Sort keys are ISO-8601 timestamps, which gives range queries for free: ISO-8601
 sorts lexicographically in the same order it sorts chronologically. That single
@@ -240,6 +248,25 @@ metrics for free. No `PutMetricData` call, no latency, no per-metric cost.
 
 **X-Ray tracing** around each source fetch, so a slow run is diagnosable without
 scattering timing logs.
+
+### Calibration, the one measurement that is not about uptime
+
+Everything above watches whether the bot *ran*. The weekly calibration report in
+`domain/calibration.py` is the only thing that watches whether it was *right*:
+the backfill grades the settled gameweek's stored predictions against the points
+actually scored, and logs RMSE, Spearman, a Brier score on P(haul) and P10-P90
+coverage.
+
+Coverage is the one to read. `mu * ceiling` is a term in the ranking objective,
+so an overstated P90 reorders the board while the mean stays perfectly
+calibrated - a failure mode no alarm here would ever fire on. See MODEL.md
+section 8.
+
+Deliberately logged rather than emitted as EMF. Unlike the metrics above, which
+are free because they ride on log lines already being written, a *custom* metric
+costs per metric per month, and the stack already publishes 14 against a free
+tier of 10. These fire once a week and are read in Logs Insights when somebody is
+asking the question.
 
 ### `SchemaDriftDetected` is the important one
 
