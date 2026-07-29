@@ -8,8 +8,12 @@ from __future__ import annotations
 
 from datetime import date
 
+import httpx
 import pytest
+import respx
 
+from fplbot.config import HttpPolicy
+from fplbot.http.client import HttpClient, HttpFetchError
 from fplbot.sources.clubelo import _parse_fixture_row
 from fplbot.sources.ffs import PHOTO_CODE_PATTERN, parse_lineups
 from fplbot.sources.premierinjuries import parse_injury_table, parse_uk_date
@@ -208,6 +212,44 @@ class TestUkDates:
 # Understat
 # ---------------------------------------------------------------------------
 class TestUnderstat:
+    def test_league_data_accepts_understats_javascript_content_type(self) -> None:
+        """Understat serves JSON as `text/javascript;charset=utf-8`.
+
+        Only the header is unusual - the body is ordinary JSON. Demanding
+        `application/json` rejected every response before the parser saw it and
+        left the source permanently degraded in production, reported in the email
+        as "understat (failed)" on a request that had actually returned 200.
+
+        The assertion still has to reject an HTML challenge or maintenance page,
+        which is the whole reason it exists, so that case is pinned here too.
+        """
+        client = HttpClient(policy=HttpPolicy(max_attempts=1, min_host_spacing_seconds=0))
+        url = "https://understat.com/getLeagueData/EPL/2026"
+        accepted = ("application/json", "text/javascript")
+
+        with respx.mock:
+            respx.get(url).mock(
+                return_value=httpx.Response(
+                    200,
+                    content=b'{"teams":[],"players":[],"dates":[]}',
+                    headers={"content-type": "text/javascript;charset=utf-8"},
+                )
+            )
+            result = client.fetch("understat", url, expect_content_type=accepted)
+
+        assert result.json() == {"teams": [], "players": [], "dates": []}
+
+        with respx.mock:
+            respx.get(url).mock(
+                return_value=httpx.Response(
+                    200,
+                    content=b"<html>maintenance</html>",
+                    headers={"content-type": "text/html"},
+                )
+            )
+            with pytest.raises(HttpFetchError):
+                client.fetch("understat", url, expect_content_type=accepted)
+
     def test_empty_teams_is_an_array_not_an_object(self) -> None:
         """The live pre-season landmine.
 
