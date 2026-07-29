@@ -241,6 +241,21 @@ class ModelTunables:
         default_factory=lambda: {"GKP": 0.00, "DEF": 0.06, "MID": 0.15, "FWD": 0.13}
     )
 
+    # How much of last season's per-90 rate to trust before this season starts,
+    # expressed as equivalent minutes fed into the same shrinkage formula.
+    #
+    # Pre-season is the ONLY time this applies, and it matters more than it
+    # sounds: `season_has_started` stays false until the GW1 deadline passes, so
+    # the GW1 board - the first one that counts - is built entirely from this
+    # path. Discarding last season's rates there modelled Haaland at the average
+    # forward's 0.35 xG/90 instead of his own 0.78, and the ownership penalty
+    # then ranked him below cheap differentials.
+    #
+    # 300 against a 450-minute prior weight puts at most 40% on last season.
+    # Deliberately conservative: player quality persists across seasons, but
+    # transfers, age and role changes mean it is evidence rather than fact.
+    preseason_equivalent_minutes: float = 300.0
+
     # --- Set-piece and penalty multipliers ---------------------------------
     # `penalties_order == 1` is worth a large, separate bump: roughly 0.12 xG per
     # match in expectation for a first-choice taker at a side that wins penalties.

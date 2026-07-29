@@ -14,12 +14,19 @@ says explicitly are placeholders awaiting a fit. What we test instead are the
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from fplbot.config import TUNABLES
 from fplbot.domain.minutes import MinutesDistribution, estimate_minutes
-from fplbot.domain.scoring import ScoringContext, score_player, shrink_per_90
+from fplbot.domain.scoring import (
+    ScoringContext,
+    attacking_rates,
+    score_player,
+    shrink_per_90,
+)
 from fplbot.models.domain import AvailabilitySignal, FixtureContext, TeamGameweek
 from fplbot.models.fpl import Bootstrap, ScoringRules
 
@@ -82,6 +89,90 @@ class TestShrinkage:
     def test_no_data_returns_the_prior_exactly(self) -> None:
         assert shrink_per_90(None, 0, prior=0.35, prior_minutes=450) == 0.35
         assert shrink_per_90(1.0, 0, prior=0.35, prior_minutes=450) == 0.35
+
+
+class TestPreSeasonAttackingRates:
+    """Pre-season is the ONLY time this path runs, and it is the path that builds
+    the GW1 board - `season_has_started` stays false until the GW1 deadline
+    passes, so the first board that counts is produced entirely from here.
+
+    It used to discard last season's per-90 rates completely, which modelled
+    Haaland at the average forward's 0.35 xG/90 rather than his own 0.78 and let
+    the ownership penalty rank him below cheap differentials.
+    """
+
+    def _rates(self, bootstrap: Bootstrap, *, xg: float | None, minutes: int, position="FWD"):
+        context = ScoringContext(
+            element_types={1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"},
+            scoring_rules=bootstrap.game_config.scoring,
+            season_has_started=False,
+            tunables=TUNABLES,
+            rng=np.random.default_rng(1),
+        )
+        element = SimpleNamespace(
+            id=1,
+            minutes=minutes,
+            xg_per_90=xg,
+            xa_per_90=0.0,
+            expected_goals_per_90=xg,
+            expected_assists_per_90=0.0,
+        )
+        return attacking_rates(element, position, context)
+
+    def test_an_elite_rate_survives_pre_season(self, bootstrap: Bootstrap) -> None:
+        """The bug this fixes. A forward with a genuinely elite record must not
+        be flattened to the positional average."""
+        prior = TUNABLES.prior_xg90["FWD"]
+
+        elite_xg, _ = self._rates(bootstrap, xg=0.78, minutes=2800)
+
+        assert elite_xg > prior, "an elite record must move the estimate above the prior"
+        assert elite_xg < 0.78, "but it is last season's, so it must still be shrunk"
+
+    def test_cross_season_weight_is_capped(self, bootstrap: Bootstrap) -> None:
+        """A full season of last year's minutes must not buy full confidence.
+        Two players with identical rates and wildly different minutes above the
+        cap should land in the same place."""
+        a, _ = self._rates(bootstrap, xg=0.78, minutes=1000)
+        b, _ = self._rates(bootstrap, xg=0.78, minutes=3000)
+
+        assert a == pytest.approx(b), "minutes beyond the cap must not add weight"
+
+    def test_a_tiny_sample_is_still_shrunk_hard(self, bootstrap: Bootstrap) -> None:
+        """Not hypothetical: one midfielder currently shows 3.60 xG/90 off a
+        handful of minutes. An uncapped rate would put him top of the board."""
+        prior = TUNABLES.prior_xg90["MID"]
+
+        noisy, _ = self._rates(bootstrap, xg=3.60, minutes=20, position="MID")
+
+        assert noisy < prior * 2, "20 minutes is not evidence of a 3.6 xG/90 player"
+
+    def test_a_player_with_no_history_gets_the_prior(self, bootstrap: Bootstrap) -> None:
+        """New signings and promoted-club players have no rate at all."""
+        prior = TUNABLES.prior_xg90["FWD"]
+
+        assert self._rates(bootstrap, xg=None, minutes=0)[0] == prior
+        assert self._rates(bootstrap, xg=0.0, minutes=0)[0] == prior
+
+    def test_an_average_player_stays_near_the_prior(self, bootstrap: Bootstrap) -> None:
+        """The fix must lift the genuinely elite without disturbing everyone else."""
+        prior = TUNABLES.prior_xg90["FWD"]
+
+        average, _ = self._rates(bootstrap, xg=prior, minutes=2500)
+
+        assert average == pytest.approx(prior)
+
+    def test_the_elite_gap_widens_against_a_midfielder(self, bootstrap: Bootstrap) -> None:
+        """The observed symptom: a 12%-owned midfielder out-captained a 75%-owned
+        Haaland because both were flattened to their positional averages, and
+        midfielders earn 5 points a goal against a forward's 4."""
+        haaland, _ = self._rates(bootstrap, xg=0.78, minutes=2800, position="FWD")
+        gibbs_white, _ = self._rates(bootstrap, xg=0.31, minutes=2500, position="MID")
+
+        fixed_gap = haaland * 4 - gibbs_white * 5
+        prior_gap = TUNABLES.prior_xg90["FWD"] * 4 - TUNABLES.prior_xg90["MID"] * 5
+
+        assert fixed_gap > prior_gap, "the elite forward must gain ground, not lose it"
 
 
 class TestBlanksAndDoubles:

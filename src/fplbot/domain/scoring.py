@@ -173,10 +173,38 @@ def attacking_rates(
     prior_xa = context.tunables.prior_xa90.get(position, 0.1)
 
     if not context.season_has_started:
-        # Pre-season: `minutes` holds LAST season's value while everything around
-        # it has been reset. Blending the two would silently mix seasons, so we
-        # fall back to the prior entirely and say so in the report's caveats.
-        return prior_xg, prior_xa
+        # Pre-season. The counters (`total_points`, `event_points`, transfers)
+        # have been reset while `minutes` still holds LAST season's total, so
+        # anything cumulative is untrustworthy here.
+        #
+        # The per-90 RATES are the exception, and treating them like the counters
+        # was throwing away the only player-specific signal available for the GW1
+        # board. A rate is not season-contaminated the way a total is: FPL
+        # reports 0.78 xG/90 for Haaland, and replacing that with the average
+        # forward's 0.35 does not make the model more careful, it makes it blind.
+        #
+        # What genuinely cannot be trusted is `minutes` as the shrinkage WEIGHT -
+        # a full season of it would trust last year's form as though it were
+        # this year's. So the weight is capped, which does two jobs at once:
+        # it discounts cross-season evidence for everyone, and it still shrinks
+        # a small sample hard. That second part is not hypothetical - one
+        # midfielder currently shows 3.60 xG/90 off a handful of minutes, and an
+        # uncapped rate would promote him to the top of the board.
+        capped_minutes = int(min(element.minutes, context.tunables.preseason_equivalent_minutes))
+        return (
+            shrink_per_90(
+                element.xg_per_90 or 0.0,
+                capped_minutes,
+                prior_xg,
+                context.tunables.shrinkage_prior_minutes,
+            ),
+            shrink_per_90(
+                element.xa_per_90 or 0.0,
+                capped_minutes,
+                prior_xa,
+                context.tunables.shrinkage_prior_minutes,
+            ),
+        )
 
     xg90 = context.xg90_by_element.get(element.id, element.xg_per_90)
     xa90 = context.xa90_by_element.get(element.id, element.xa_per_90)
