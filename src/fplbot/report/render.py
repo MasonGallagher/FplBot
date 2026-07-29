@@ -179,7 +179,7 @@ def _empty(message: str) -> str:
     rather than a section that failed to render."""
     return (
         f'<p style="margin:0;padding:14px 16px;font-family:{FONT};font-size:13px;'
-        f'color:{COLOURS["muted"]};background:{COLOURS["header_bg"]};'
+        f"color:{COLOURS['muted']};background:{COLOURS['header_bg']};"
         f'border:1px solid {COLOURS["border"]};border-radius:8px;">{esc(message)}</p>'
     )
 
@@ -392,9 +392,7 @@ def _buy_board(board: Board) -> str:
 
 def _buy_row(rec: Recommendation, index: int) -> str:
     score = rec.score
-    cell = (
-        f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
-    )
+    cell = f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
     confidence_colour = CONFIDENCE_COLOUR[rec.confidence]
 
     detail_bits = [f'<em style="font-style:normal;">{esc(rec.why)}</em>']
@@ -494,8 +492,10 @@ def _spread_chart(board: Board) -> str:
         "and for a rank-gain objective the ceiling is usually the half that matters."
     )
     rows = "\n".join(_spread_row(rec, scale) for rec in top)
-    return heading + intro + f'<table role="presentation" cellpadding="0" cellspacing="0"'\
+    return (
+        heading + intro + f'<table role="presentation" cellpadding="0" cellspacing="0"'
         f' border="0" width="100%" style="border-collapse:collapse;">{rows}</table>'
+    )
 
 
 def _spread_row(rec: Recommendation, scale: float) -> str:
@@ -593,9 +593,7 @@ def _captain_picks(board: Board) -> str:
 
 def _captain_row(pick, index: int) -> str:
     score = pick.score
-    cell = (
-        f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
-    )
+    cell = f"padding:11px 10px;border-bottom:1px solid {COLOURS['line_soft']};vertical-align:top;"
     confidence_colour = CONFIDENCE_COLOUR[pick.confidence]
 
     badges = ""
@@ -717,9 +715,7 @@ def _metric(label: str, value: str, *, emphasis: bool = False) -> str:
 
 def _squad_row(player, *, is_captain: bool) -> str:
     cell = f"padding:9px 10px;border-bottom:1px solid {COLOURS['line_soft']};"
-    captain_badge = (
-        " " + _pill("C", fg="#ffffff", bg=COLOURS["confirmed"]) if is_captain else ""
-    )
+    captain_badge = " " + _pill("C", fg="#ffffff", bg=COLOURS["confirmed"]) if is_captain else ""
     return f"""
     <tr>
       <td style="{cell}font-size:13px;">

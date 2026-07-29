@@ -232,7 +232,7 @@ class TestSpreadChart:
         html = render_html(a_context(), board)
 
         # Each bar is one <tr> of segments inside a fixed-layout table.
-        for row in re.findall(r'table-layout:fixed.*?<tr>(.*?)</tr>', html, re.S):
+        for row in re.findall(r"table-layout:fixed.*?<tr>(.*?)</tr>", html, re.S):
             widths = [float(w) for w in re.findall(r'width="([\d.]+)%"', row)]
             assert widths
             assert sum(widths) <= 100.01
@@ -245,7 +245,7 @@ class TestSpreadChart:
         board = Board(build_buy_board([wide, narrow], TUNABLES), [], [], [])
 
         html = render_html(a_context(), board)
-        rows = re.findall(r'table-layout:fixed.*?<tr>(.*?)</tr>', html, re.S)
+        rows = re.findall(r"table-layout:fixed.*?<tr>(.*?)</tr>", html, re.S)
 
         def coloured_width(row: str) -> float:
             return sum(
