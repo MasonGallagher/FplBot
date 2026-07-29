@@ -81,7 +81,9 @@ human-readable "why".
   - Lambda's hard limit is **250 MB unzipped** across function + layers.
 - **Memory** 1024 MB, **timeout** 120s (poll) / 600s (backfill, separate function).
 - **Reserved concurrency: 1.** This is a scheduled singleton.
-- **Region:** `eu-west-1` or `eu-west-2` — nearest the Fastly LHR/LCY POPs fronting FPL.
+- **Region:** `eu-west-1`. Both it and `eu-west-2` sit near the Fastly LHR/LCY POPs
+  fronting FPL; `eu-west-1` is the one actually deployed, and every default in the
+  repo now agrees with it.
 
 **Storage**
 - **DynamoDB**, single table, on-demand, TTL enabled, PITR on.

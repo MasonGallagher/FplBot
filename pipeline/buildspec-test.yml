@@ -20,7 +20,7 @@ env:
     EMAIL_FROM: test@example.com
     EMAIL_TO: test@example.com
     SEASON: "2026-27"
-    AWS_DEFAULT_REGION: eu-west-2
+    AWS_DEFAULT_REGION: eu-west-1
 
 phases:
   install:

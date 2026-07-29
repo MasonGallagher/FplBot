@@ -1,9 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 
 Description: >
-  CI/CD pipeline for fplBot. Source -> Test -> Build -> Deploy(dev) ->
-  Manual approval -> Deploy(prod). Deployed once, separately from the application
-  stack it deploys.
+  CI/CD pipeline for fplBot. Source -> Test -> Build -> Deploy(dev) -> Smoke ->
+  Deploy(prod), with no manual gate: a merge to the tracked branch reaches
+  production on its own. Deployed once, separately from the application stack it
+  deploys.
 
 # ---------------------------------------------------------------------------
 # WHY THIS SHAPE
@@ -20,9 +21,21 @@ Description: >
 #    suite does not touch live infrastructure (SPEC section 7: "tests must never
 #    hit live APIs"). If a test needed a credential it would fail here, loudly.
 #
-# 3. PROD IS GATED BY A HUMAN. This bot emails recommendations on a schedule; a
-#    bad deploy at T-3h on a Saturday is a wasted gameweek. Thirty seconds of
-#    human attention is cheap insurance for a system whose failures are timed.
+# 3. PROD IS NOT GATED BY A HUMAN - deliberately, and with a cost worth stating.
+#    A merge to the tracked branch deploys to production unattended. What stands
+#    between a bad commit and a live bot is the Test stage and the dev smoke
+#    test, and those catch a crash, an import error or a broken template. They
+#    do not catch a change that runs perfectly and produces worse advice, because
+#    the smoke test asserts the run completes, not that the board is any good.
+#
+#    That matters here more than it would elsewhere, because this system's
+#    failures are timed: the schedule fires at T-3h before a deadline, and a bad
+#    deploy landing that afternoon costs a gameweek that cannot be replayed. The
+#    mitigations are the ones already in the stack - dev deploys in dry-run so
+#    the rendered report is inspectable in CloudWatch, prod keeps DeletionPolicy
+#    Retain on the table and bucket, and the alarms fire on schema drift and
+#    invariant violations. If a bad board ever does go out, re-adding an
+#    Approval action ahead of DeployProd is a dozen lines and restores the gate.
 # ---------------------------------------------------------------------------
 
 Parameters:
@@ -305,28 +318,10 @@ Resources:
                 - Name: SourceCode
               RunOrder: 3
 
-        # -- Human gate ---------------------------------------------------
-        - Name: ApproveProd
-          Actions:
-            - Name: ManualApproval
-              ActionTypeId:
-                Category: Approval
-                Owner: AWS
-                Provider: Manual
-                Version: "1"
-              Configuration:
-                CustomData: >
-                  Dev deployed and smoke-tested in dry-run mode. Approving will
-                  deploy to production with live schedules and real email sending.
-                  Check the dev CloudWatch logs for the rendered report before
-                  approving, especially if the model or the email template changed.
-                NotificationArn: !If
-                  - HasNotificationEmail
-                  - !Ref NotificationTopic
-                  - !Ref "AWS::NoValue"
-              RunOrder: 1
-
         # -- Deploy to prod -----------------------------------------------
+        # Continuous deployment: a merge to the tracked branch reaches production
+        # without stopping. The gate is the Test stage plus the dev smoke test
+        # above - see "WHY THIS SHAPE" note 3 for what that does and does not buy.
         - Name: DeployProd
           Actions:
             - Name: CreateChangeSet
@@ -404,9 +399,13 @@ Resources:
       DetailType: BASIC
       Resource: !Sub "arn:${AWS::Partition}:codepipeline:${AWS::Region}:${AWS::AccountId}:${Pipeline}"
       EventTypeIds:
+        # No manual-approval event: there is no approval action to raise one.
+        # With prod deploying unattended, the failure notification is the one
+        # that matters - it is now the only thing that tells you a merge did not
+        # make it out, and the success notification is the only confirmation that
+        # what is live changed.
         - codepipeline-pipeline-pipeline-execution-failed
         - codepipeline-pipeline-pipeline-execution-succeeded
-        - codepipeline-pipeline-manual-approval-needed
       Targets:
         - TargetType: SNS
           TargetAddress: !Ref NotificationTopic

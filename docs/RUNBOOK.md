@@ -35,7 +35,7 @@ notification window is the correct behaviour.
 
 ```bash
 STACK=fplbot-prod
-REGION=eu-west-2
+REGION=eu-west-1
 
 # What happened on the last run?
 sam logs --stack-name $STACK --region $REGION --tail
