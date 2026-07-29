@@ -39,7 +39,7 @@ sends you an opinion. You decide.
 flowchart LR
     A["Football data<br/>official FPL site, injury<br/>news, betting odds"]
     B["The robot<br/>wakes up every hour,<br/>reads the latest data"]
-    C{"Is a deadline<br/>coming up soon?"}
+    C{"Deadline coming up?"}
     D["Write today's data<br/>into its diary<br/>and go back to sleep"]
     E["Work out who to buy,<br/>sell and captain"]
     F["Email you a<br/>ranked shortlist"]
@@ -252,23 +252,23 @@ The shape that matters: **five cheap gates before any expensive work**. Roughly
 ```mermaid
 flowchart TD
     START(["EventBridge invoke"]) --> FETCH["Fetch FPL bootstrap-static"]
-    FETCH --> ASSERT{"Timezone UTC?<br/>Invariants hold?"}
+    FETCH --> ASSERT{"Timezone and invariants OK?"}
     ASSERT -->|"No"| ALARM["Emit metric<br/>→ alarm fires"]
     ASSERT -->|"Yes"| SNAP["Snapshot to DynamoDB<br/>always, every run"]
     ALARM --> SNAP
 
     SNAP --> D1{"Deadline exists?"}
     D1 -->|"No — off-season<br/>or season over"| X1(["exit: no_deadline"])
-    D1 -->|"Yes"| D2{"Within 24h<br/>of a deadline?"}
+    D1 -->|"Yes"| D2{"Within 24h of a deadline?"}
     D2 -->|"No"| X2(["exit: snapshot_only"])
-    D2 -->|"Yes"| D3{"Tier already<br/>notified?"}
+    D2 -->|"Yes"| D3{"Tier already notified?"}
     D3 -->|"Yes"| X3(["exit: suppressed"])
     D3 -->|"No — take lock<br/>conditional write"| WORK
 
     subgraph WORK["The expensive half — only when there is an email to send"]
         direction TB
         W1["Ingest third-party sources<br/>each behind a circuit breaker"]
-        W2{"Data older than<br/>the 24h ceiling?"}
+        W2{"Past the 24h ceiling?"}
         W3["Resolve player identities<br/>photo code → cache → exact → fuzzy"]
         W4["Transfer-flow analysis<br/>→ availability signals"]
         W5["Score every player<br/>Monte Carlo, 4000 samples"]
@@ -353,7 +353,7 @@ flowchart TD
     M["The gameweek<br/>is played"]
     P3["Hourly poll keeps<br/>snapshotting"]
     P4["Snapshot carries<br/>event points"]
-    B{"Current gameweek<br/>finished AND<br/>data checked?"}
+    B{"Finished and data checked?"}
     SKIP(["Skip - bonus points<br/>may still be pending"])
     G["Backfill grades it<br/>RMSE, Spearman,<br/>Brier, coverage"]
     L["Logged for<br/>Logs Insights"]
@@ -469,14 +469,14 @@ Every external source can fail without taking the run down.
 
 ```mermaid
 flowchart TD
-    REQ["Request a source"] --> BRK{"Circuit breaker<br/>open?"}
+    REQ["Request a source"] --> BRK{"Circuit breaker open?"}
     BRK -->|"Yes — 3 consecutive<br/>failures this run"| LKG
     BRK -->|"No"| TRY["Fetch<br/>≥1.5s since last hit to this host"]
-    TRY --> OK{"200 and the<br/>expected content type?"}
+    TRY --> OK{"200 and expected content type?"}
     OK -->|"Yes"| USE["Use it<br/>archive raw bytes to S3"]
     OK -->|"Retryable<br/>429/5xx"| RETRY["Backoff with full jitter<br/>3 attempts, cap 60s"] --> TRY
     OK -->|"403 / 404<br/>never retried"| LKG
-    LKG["Last known good<br/>from DynamoDB"] --> AGE{"Older than<br/>the 24h ceiling?"}
+    LKG["Last known good<br/>from DynamoDB"] --> AGE{"Past the 24h ceiling?"}
     AGE -->|"No"| DEG["Use it · mark source DEGRADED<br/>→ named in the email caveats"]
     AGE -->|"Yes"| REFUSE["Refuse to advise<br/>email about the failure instead"]
 
