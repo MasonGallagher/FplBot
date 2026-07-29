@@ -84,17 +84,21 @@ two a week in season.
 
 The T-3h run is the one to act on, and this is not a detail. On the live injury
 table, **23 of 44 listed players are "Currently Being Assessed"** - over half.
-That status is precisely what a manager's press conference resolves, and pressers
-for a Saturday fixture land Thursday and Friday afternoon. T-24h for a Saturday
-11:00 deadline is **Friday 11:00**, ahead of some of them - early enough to plan a
-transfer and watch a price change, but labelled provisional. T-3h is Saturday
-08:00, after all of them.
+That status is precisely what a manager's press conference resolves, and those
+pressers land in the day or two before a fixture. T-24h can fall ahead of some of
+them - early enough to plan a transfer and watch a price change, but labelled
+provisional for that reason. T-3h sits after them.
 
-A run that fires before the pressers therefore guesses on a meaningful share of
-its injury cases, which is why the T-24h email is labelled `PROVISIONAL` in a
-large amber banner and the T-3h one `CONFIRMED`. There was once a T-48h tier as
-well; it was dropped because it fired before *any* press conference and was
-superseded by both of the others.
+For a weekend round that means T-24h on Friday morning and T-3h on Saturday
+morning. **That is an example, not the schedule.** Deadlines are not always Friday
+or Saturday - midweek rounds put them on a Tuesday or Wednesday and the festive
+period scatters them further. Both tiers are pure offsets from the deadline epoch,
+so no case is special; where the pressers have already happened by T-24h, the
+provisional label simply errs on the cautious side.
+
+The T-24h email is labelled `PROVISIONAL` in an amber banner, the T-3h one
+`CONFIRMED`. There was once a T-48h tier as well; it was dropped because it fired
+before *any* press conference and was superseded by both of the others.
 
 ### The objective is rank, not points
 

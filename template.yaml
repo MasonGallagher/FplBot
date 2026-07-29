@@ -353,8 +353,25 @@ Resources:
     Properties:
       Name: !Sub "fplbot-backfill-${Environment}"
       Description: Weekly element-summary backfill, Tuesday 03:17 - after a gameweek finalises
-      # Tuesday early morning: the weekend's bonus points and data checks have
+      # Tuesday early morning: a weekend round's bonus points and data checks have
       # settled by Monday night, and nothing else is competing for our attention.
+      #
+      # This is the one schedule in the stack tied to a day of the week, and a
+      # midweek round breaks the tidy story - fixtures on a Tuesday or Wednesday
+      # are not finalised when this fires, so that gameweek is not picked up until
+      # the following Tuesday, up to six days later.
+      #
+      # That is latency, not loss, and the distinction is why this stays weekly.
+      # `element-summary` history is **retroactive**: the per-gameweek rows are
+      # served whenever we ask, so a late run collects the missed gameweek intact.
+      # Contrast the hourly poll, whose intra-gameweek velocity genuinely cannot
+      # be recovered - an hour not snapshotted is gone. Only the poll needs to
+      # keep up with the fixture calendar.
+      #
+      # Making this fire more often would cost real money for no data: at one
+      # request per player with 1.5s host spacing, this is the single most
+      # expensive thing the bot does, and SPEC section 2 names an unbounded
+      # element-summary backfill as the one way to turn a 50p bill into a real one.
       ScheduleExpression: "cron(17 3 ? * TUE *)"
       ScheduleExpressionTimezone: Europe/London
       FlexibleTimeWindow:

@@ -40,10 +40,16 @@ HOUR = 3600
 # once team news has landed. This was 48h/24h/3h; the 48h tier is gone because it
 # fired before any press conference and was superseded by both of the others.
 #
-# The two that remain do different jobs and both earn their send. T-24h (Friday
-# morning for a Saturday 11:00 deadline) is early enough to plan a transfer and
-# watch a price change. T-3h is Saturday 08:00, after the Thursday and Friday
-# pressers that resolve "Currently Being Assessed" - it is the one to act on.
+# The two that remain do different jobs and both earn their send. T-24h is early
+# enough to plan a transfer and watch a price change, but can land before the
+# press conferences that resolve "Currently Being Assessed". T-3h sits after
+# them, and is the one to act on.
+#
+# Both are offsets from the deadline, never from a day of the week. Deadlines are
+# not always Friday or Saturday - midweek rounds put them on a Tuesday or
+# Wednesday, and the festive period scatters them further. Anchoring to the
+# deadline epoch is what makes the tiers correct for all of those without
+# special-casing; a weekend fixture is only ever the worked example below.
 NOTIFY_TIERS_SECONDS: tuple[int, ...] = (24 * HOUR, 3 * HOUR)
 
 # The tier we consider "confirmed" rather than "provisional". Team news from

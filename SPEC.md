@@ -127,9 +127,16 @@ email a gameweek and bought nothing. Two remain, and each does a distinct job.
 
 The confirmation run is not optional polish. On the live injury table, **23 of 44
 listed players are "Currently Being Assessed"** — over half. That status is what a
-manager's press conference resolves, and pressers for a Saturday fixture land
-Thursday–Friday afternoon. T−24h for a Saturday 11:00 deadline is **Friday 11:00**,
-ahead of some of them; T−3h is **Saturday 08:00**, after all of them.
+manager's press conference resolves, and those pressers land in the day or two
+before a fixture. T−24h can fall ahead of some of them; T−3h sits after them.
+
+For a weekend round: a Saturday 11:00 deadline puts T−24h at Friday 11:00 and T−3h
+at Saturday 08:00. **That is a worked example, not the schedule.** Deadlines are
+not always Friday or Saturday - midweek rounds fall on a Tuesday or Wednesday, and
+the festive period scatters them further. Every tier is an offset from
+`deadline_time_epoch`, so there is no weekday logic anywhere and no case to
+special-case. Where a presser has already landed by T−24h the provisional label is
+merely conservative, which is the safe direction to be wrong in.
 
 So T−24h is early enough to plan a transfer and watch a price change, and is labelled
 provisional. T−3h re-polls the fast-moving sources (FPL bootstrap, PremierInjuries,

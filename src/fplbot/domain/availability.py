@@ -307,8 +307,9 @@ def build_availability_signal(
     if signal.awaiting_press_conference:
         signal.notes.append(
             "Listed as 'Currently Being Assessed'. A manager's press conference "
-            "will resolve this, typically Thursday or Friday - after the T-24h "
-            "run. The T-3h report is the one to act on for this player."
+            "will resolve this, usually in the day or two before the fixture and "
+            "sometimes after this run. The T-3h report is the one to act on for "
+            "this player."
         )
 
     signal.risk = round(min(1.0, max(0.0, risk)), 3)

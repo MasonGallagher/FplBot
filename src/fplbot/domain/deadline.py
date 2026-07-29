@@ -148,14 +148,21 @@ def tier_label(threshold_seconds: int) -> str:
 def is_confirmed_phase(tier: str) -> bool:
     """Whether this tier is the one the user should act on.
 
-    The T-24h report is provisional and must be labelled as such. For a Saturday
-    11:00 deadline it lands Friday 11:00, and managers' press conferences for a
-    weekend fixture land Thursday and Friday afternoon - so some of the injury
-    table is still "Currently Being Assessed", the status those pressers exist to
-    resolve.
+    The T-24h report is provisional and must be labelled as such, because it can
+    land before the press conferences that resolve "Currently Being Assessed".
+    T-3h sits after them and is the output to act on.
 
-    T-3h is Saturday 08:00, after all of them. It re-polls the fast-moving sources
-    and is the output to act on. SPEC section 3.
+    Worked example, for a weekend round: a Saturday 11:00 deadline puts T-24h at
+    Friday 11:00, ahead of some of the Thursday/Friday afternoon pressers, and
+    T-3h at Saturday 08:00, after all of them.
+
+    That is an example and not the rule. Deadlines are not always Friday or
+    Saturday: midweek rounds put them on a Tuesday or Wednesday, where pressers
+    usually land the day before and T-24h is often already informed by them. Both
+    tiers are pure offsets from the deadline epoch, so every case is handled by
+    the same arithmetic - and the labelling errs conservative, telling the reader
+    to wait when the news may already be in rather than the reverse.
+    SPEC section 3.
     """
     return tier == tier_label(CONFIRMED_TIER_SECONDS)
 

@@ -867,9 +867,9 @@ def _caveats(quality: DataQuality, context: RunContext) -> str:
 
     if not context.is_confirmed_phase:
         items.append(
-            "This is the T-24h planning report. Managers' press conferences for a weekend "
-            "fixture typically land Thursday and Friday afternoon, some of them after this "
-            "run. The T-3h report will resolve most of the outstanding fitness questions."
+            "This is the T-24h planning report. Managers' press conferences usually land "
+            "in the day or two before a fixture, and some of them fall after this run. "
+            "The T-3h report will resolve most of the outstanding fitness questions."
         )
 
     if not context.season_has_started:
