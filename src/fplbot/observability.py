@@ -18,6 +18,7 @@ are the early-warning system; the SAM template alarms on both.
 from __future__ import annotations
 
 import functools
+import os
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -61,6 +62,46 @@ class Metric:
     ODDS_CREDITS_REMAINING = "OddsCreditsRemaining"
 
 
+# ---------------------------------------------------------------------------
+# Which metrics are actually published
+# ---------------------------------------------------------------------------
+# CloudWatch bills $0.30 per custom metric per month beyond a free ten, and a
+# *dimensioned* metric is billed once per distinct dimension set - so
+# SourceFetchOk broken out by source is not one metric, it is one per source.
+# This stack was publishing 19 and paying for 9 of them, which was several times
+# the cost of everything else in the account put together.
+#
+# So by default only the metrics an ALARM depends on are published. Those three
+# have to survive, because an alarm whose metric stopped being emitted does not
+# fail loudly - it sits in INSUFFICIENT_DATA, or with TreatMissingData
+# notBreaching it simply never fires again. Silently disabling the schema-drift
+# alarm, which template.yaml calls the most important alarm in the stack, is
+# exactly the kind of saving that costs a season.
+#
+# Everything else is DEMOTED TO A LOG LINE rather than deleted. The number is
+# still recorded, still queryable in Logs Insights, and log ingestion for this
+# workload is around a penny a month. Set PUBLISH_ALL_METRICS=true to put them
+# all back without a code change - which is the point: when something breaks,
+# the diagnostic path is to re-enable and wait a run, not to redeploy.
+ALARMED_METRICS: frozenset[str] = frozenset(
+    {
+        "SchemaDriftDetected",  # SchemaDriftAlarm
+        "InvariantViolated",  # InvariantViolationAlarm
+        "OddsCreditsRemaining",  # OddsQuotaAlarm
+    }
+)
+
+PUBLISH_ALL_METRICS = os.environ.get("PUBLISH_ALL_METRICS", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+}
+
+
+def _should_publish(name: str) -> bool:
+    return PUBLISH_ALL_METRICS or name in ALARMED_METRICS
+
+
 # Fields we have already reported as drifted, so we log once per field per
 # container rather than once per player per run. 558 elements times one unknown
 # field is 558 identical log lines and a surprising CloudWatch bill.
@@ -83,7 +124,7 @@ def report_schema_drift(model: str, field_name: str, sample: Any = None) -> None
         "Unexpected field in upstream payload",
         extra={"model": model, "field": field_name, "sample": repr(sample)[:200]},
     )
-    metrics.add_metric(name=Metric.SCHEMA_DRIFT_DETECTED, unit=MetricUnit.Count, value=1)
+    count(Metric.SCHEMA_DRIFT_DETECTED)
 
 
 def report_invariant_violation(name: str, detail: str) -> None:
@@ -94,7 +135,7 @@ def report_invariant_violation(name: str, detail: str) -> None:
     rank-attacking calculation downstream is built on sand.
     """
     logger.error("Business invariant violated", extra={"invariant": name, "detail": detail})
-    metrics.add_metric(name=Metric.INVARIANT_VIOLATED, unit=MetricUnit.Count, value=1)
+    count(Metric.INVARIANT_VIOLATED)
 
 
 def emit(name: str, value: float, unit: MetricUnit, **dimensions: str) -> None:
@@ -106,6 +147,13 @@ def emit(name: str, value: float, unit: MetricUnit, **dimensions: str) -> None:
     metric, and mixing dimensioned and undimensioned values into one blob
     produces metrics that silently do not aggregate the way you expect.
     """
+    if not _should_publish(name):
+        # Demoted, not dropped. The value still lands in CloudWatch Logs, where
+        # it is queryable and costs a fraction of a cent, and the structured
+        # shape means a Logs Insights query reads the same as the metric would.
+        logger.debug("metric", extra={"metric": name, "value": value, **dimensions})
+        return
+
     if not dimensions:
         metrics.add_metric(name=name, unit=unit, value=value)
         return

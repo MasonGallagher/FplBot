@@ -73,6 +73,20 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: Build the report but do not send it. Ideal for a first live run.
 
+  PublishAllMetrics:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Publish every custom metric, rather than only the three an alarm depends
+      on. CloudWatch bills $0.30 per custom metric per month beyond a free ten,
+      and a dimensioned metric costs one per dimension set - SourceFetchOk broken
+      out by source is one metric per source, not one metric. Publishing
+      everything came to 19 metrics and dwarfed the rest of this stack's bill.
+      With this false the remaining values are logged instead, so nothing is lost
+      and Logs Insights can still answer the question. Set it true while
+      diagnosing something, then set it back.
+
   CreateSenderIdentity:
     Type: String
     Default: "true"
@@ -93,6 +107,14 @@ Conditions:
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
   SchedulesOn: !Equals [!Ref SchedulesEnabled, "true"]
   OwnsSenderIdentity: !Equals [!Ref CreateSenderIdentity, "true"]
+  # Alarms are production-only. In dev the stack runs with SchedulesEnabled
+  # false, so PollSilenceAlarm - which fires when invocations drop below one in
+  # three hours, treating missing data as breaching - would sit in ALARM
+  # permanently and email about a silence that is the configured behaviour. An
+  # alarm that is always red trains you to ignore the channel the real ones use.
+  # It also takes the account from 12 provisioned alarms to 6, back inside the
+  # free ten.
+  AlarmsEnabled: !And [!Condition HasAlarmEmail, !Condition IsProd]
 
 # ---------------------------------------------------------------------------
 # Globals
@@ -116,6 +138,7 @@ Globals:
         FPLBOT_CONTACT_URL: !Ref ContactUrl
         DRY_RUN: !Ref DryRun
         LOG_LEVEL: !Ref LogLevel
+        PUBLISH_ALL_METRICS: !Ref PublishAllMetrics
         ODDS_API_KEY_PARAMETER: !If [HasOddsApiKey, !Ref OddsApiKeyParameter, !Ref "AWS::NoValue"]
         # Powertools configuration. POWERTOOLS_METRICS_NAMESPACE is required for
         # EMF metrics to land anywhere useful.
@@ -176,7 +199,10 @@ Resources:
         AttributeName: ttl
         Enabled: true
       PointInTimeRecoverySpecification:
-        PointInTimeRecoveryEnabled: true
+        # Prod only. The snapshot series there cannot be re-collected, so it is
+        # worth paying to be able to rewind. Dev is dry-run staging whose table
+        # can be rebuilt by running the poll, and PITR bills on table size.
+        PointInTimeRecoveryEnabled: !If [IsProd, true, false]
       SSESpecification:
         SSEEnabled: true
       Tags:
@@ -438,7 +464,7 @@ Resources:
   # -------------------------------------------------------------------------
   AlarmTopic:
     Type: AWS::SNS::Topic
-    Condition: HasAlarmEmail
+    Condition: AlarmsEnabled
     Properties:
       TopicName: !Sub "fplbot-alarms-${Environment}"
       Subscription:
@@ -450,7 +476,7 @@ Resources:
   # recommendations. An outage is obvious; a changed field meaning is not.
   SchemaDriftAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: HasAlarmEmail
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub "fplbot-${Environment}-schema-drift"
       AlarmDescription: >
@@ -470,7 +496,7 @@ Resources:
 
   InvariantViolationAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: HasAlarmEmail
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub "fplbot-${Environment}-invariant-violated"
       AlarmDescription: >
@@ -489,7 +515,7 @@ Resources:
 
   PollErrorAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: HasAlarmEmail
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub "fplbot-${Environment}-poll-errors"
       AlarmDescription: The poll function raised on two consecutive hourly runs.
@@ -511,7 +537,7 @@ Resources:
   # unnoticed, because nothing is broken and no error is logged.
   PollSilenceAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: HasAlarmEmail
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub "fplbot-${Environment}-poll-silent"
       AlarmDescription: >
@@ -533,7 +559,7 @@ Resources:
 
   OddsQuotaAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: HasAlarmEmail
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub "fplbot-${Environment}-odds-quota-low"
       AlarmDescription: >
@@ -551,7 +577,7 @@ Resources:
 
   DeadLetterAlarm:
     Type: AWS::CloudWatch::Alarm
-    Condition: HasAlarmEmail
+    Condition: AlarmsEnabled
     Properties:
       AlarmName: !Sub "fplbot-${Environment}-schedule-dlq"
       AlarmDescription: EventBridge Scheduler failed to invoke a function and gave up.
@@ -571,6 +597,12 @@ Resources:
   # -------------------------------------------------------------------------
   # Dashboard
   # -------------------------------------------------------------------------
+  # NOTE: most widgets below read custom metrics that are NOT published unless
+  # PublishAllMetrics is true, so they will show "no data" by default. That is
+  # the intended trade - those metrics cost more per month than the rest of the
+  # stack combined, and the same values are in the logs. Flip the parameter when
+  # you actually need the picture; the dashboard itself is free either way, and
+  # deleting it would mean rebuilding it under pressure.
   Dashboard:
     Type: AWS::CloudWatch::Dashboard
     Properties:
