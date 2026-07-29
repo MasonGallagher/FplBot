@@ -453,6 +453,25 @@ Resources:
               - Effect: Allow
                 Action: [s3:GetObject, s3:GetObjectVersion, s3:PutObject]
                 Resource: !Sub "${ArtifactBucket.Arn}/*"
+              # buildspec-test.yml publishes a JUnit report and a Cobertura
+              # coverage report, and CodeBuild creates a report group per report
+              # on first use. Without this the whole build fails in
+              # UPLOAD_ARTIFACTS *after* lint and tests have already passed,
+              # which reads as a test failure in the console and is not one.
+              #
+              # This does not weaken the "no live infrastructure" property that
+              # this role exists to demonstrate. Report groups hold the suite's
+              # own results; the role still cannot reach DynamoDB, S3 data, SES
+              # or Lambda, so a test that tried to touch real infrastructure
+              # would still fail here exactly as intended.
+              - Effect: Allow
+                Action:
+                  - codebuild:CreateReportGroup
+                  - codebuild:CreateReport
+                  - codebuild:UpdateReport
+                  - codebuild:BatchPutTestCases
+                  - codebuild:BatchPutCodeCoverages
+                Resource: !Sub "arn:${AWS::Partition}:codebuild:${AWS::Region}:${AWS::AccountId}:report-group/${AWS::StackName}-test-*"
 
   BuildRole:
     Type: AWS::IAM::Role
