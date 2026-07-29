@@ -870,9 +870,11 @@ def _caveats(quality: DataQuality, context: RunContext) -> str:
 
     if not context.season_has_started:
         items.append(
-            "The season has not started. FPL's season aggregates currently hold LAST "
-            "season's values while form and transfer counters are reset to zero, so "
-            "all attacking rates fall back to positional priors."
+            "The season has not started. FPL's cumulative counters are reset while the "
+            "per-90 rates still describe last season, so attacking rates are last "
+            "season's shrunk hard towards a positional prior - at most 40% weight on a "
+            "player's own record, and less for anyone with few minutes behind it. "
+            "Expect this board to be less discriminating than an in-season one."
         )
 
     for failure in quality.invariant_failures:

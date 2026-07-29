@@ -121,6 +121,38 @@ separately via `penalties_order`, so counting them in the base rate would
 double-count designated takers), then FPL's own Opta per-90s, then the positional
 prior alone.
 
+### Pre-season, where this matters most
+
+`season_has_started` stays false until the **GW1 deadline passes**, so the GW1
+board — the first one that counts — is built entirely from the pre-season path.
+
+That path used to discard last season's rates outright, on the grounds that
+pre-season `bootstrap-static` mixes two seasons. The caution is right about
+*counters*: `minutes`, `total_points` and `bps` still hold last season's totals
+while `form` and the transfer fields are zeroed. But a **per-90 rate is not
+contaminated the way a total is** — and discarding it modelled Haaland at the
+average forward's 0.35 xG/90 rather than his own 0.78, then let the ownership
+penalty rank a 12%-owned midfielder above him for the armband.
+
+What genuinely cannot be trusted is `minutes` as the shrinkage *weight*: a full
+season of it would treat last year's form as this year's evidence. So the weight
+is **capped** at `preseason_equivalent_minutes` (300 against a 450 prior, so at
+most 40% on the player's own record). That does two jobs at once:
+
+| Player | Real xG/90 | Before | After |
+|---|---|---|---|
+| Haaland | 0.78 | 0.35 | **0.52** |
+| Gibbs-White | 0.31 | 0.17 | 0.23 |
+| Isak | 0.34 | 0.35 | 0.35 |
+
+The elite are no longer flattened, an average forward barely moves, and a small
+sample is still shrunk hard — one midfielder currently shows **3.60 xG/90** off a
+handful of minutes, and an uncapped rate would put him top of the board.
+
+Deliberately conservative at 40%: quality persists across seasons, but transfers,
+age and role changes make it evidence rather than fact. Like every number here it
+is a prior awaiting a fit, and §8's calibration loop is what will settle it.
+
 Where a bookmaker has priced a player's anytime-goalscorer market, that is
 sharper than our xG chain - it is a liquid market's view, already devigged with
 the power method. We calibrate lambda so `P(>=1 goal)` matches the market
