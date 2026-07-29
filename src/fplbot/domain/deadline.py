@@ -108,13 +108,13 @@ def next_deadline(bootstrap: Bootstrap, now_epoch: int) -> DeadlineInfo | None:
 def due_tier(seconds_remaining: int, already_sent: set[str] | None = None) -> str | None:
     """Which notification tier, if any, this run should fire.
 
-    There is one tier, 24h. A run "crosses" it when the remaining time has dropped
-    at or below the threshold, so with hourly polling the first run inside T-24h
-    fires and every later one finds the lock already taken.
+    Tiers are 24h and 3h. A run "crosses" a tier when the remaining time has
+    dropped at or below that tier's threshold, so with hourly polling the first
+    run inside T-24h fires and every later one before T-3h finds the lock taken.
 
     We return the **tightest** tier crossed and not yet sent, so a run that fires
-    late (a missed schedule, a manual invoke at T-4h) sends the most current
-    advice rather than replaying a stale 48h view.
+    late (a missed schedule, a manual invoke at T-2h) sends the most current
+    advice rather than replaying a stale planning view.
 
     Args:
         seconds_remaining: from `next_deadline`.
@@ -123,7 +123,7 @@ def due_tier(seconds_remaining: int, already_sent: set[str] | None = None) -> st
             check that avoids doing the work at all.
 
     Returns:
-        "48h" | "24h" | "3h", or None when no tier is due.
+        "24h" | "3h", or None when no tier is due.
     """
     if seconds_remaining <= 0:
         # Deadline has passed. Nothing to advise on.
@@ -148,17 +148,14 @@ def tier_label(threshold_seconds: int) -> str:
 def is_confirmed_phase(tier: str) -> bool:
     """Whether this tier is the one the user should act on.
 
-    With a single T-24h notification the answer is yes for the scheduled tier and
-    no for anything else, which in practice means a `force_tier` invocation from
-    outside the window. "Wait for the next report" is no longer advice we can
-    give, so the scheduled run is by definition the actionable one.
+    The T-24h report is provisional and must be labelled as such. For a Saturday
+    11:00 deadline it lands Friday 11:00, and managers' press conferences for a
+    weekend fixture land Thursday and Friday afternoon - so some of the injury
+    table is still "Currently Being Assessed", the status those pressers exist to
+    resolve.
 
-    This does mean acting on less team news than the old T-3h tier had. For a
-    Saturday 11:00 deadline T-24h is Friday 11:00: some managers' press
-    conferences have happened by then and some have not, and the ones that have
-    not leave players sitting at "Currently Being Assessed" with nothing later to
-    resolve them. That uncertainty is surfaced in the caveats rather than being
-    hidden behind a phase label. SPEC section 3.
+    T-3h is Saturday 08:00, after all of them. It re-polls the fast-moving sources
+    and is the output to act on. SPEC section 3.
     """
     return tier == tier_label(CONFIRMED_TIER_SECONDS)
 

@@ -580,15 +580,15 @@ ${BOLD}${GREEN}Deployment complete.${RESET}
 
 ${BOLD}What happens now${RESET}
   The poll function runs hourly at 7 minutes past, Europe/London. Every run
-  snapshots FPL's data. When a deadline comes within 24h it also emails a board -
-  one email per gameweek, roughly three a week less than the old 48h/24h/3h
-  scheme. Some managers' press conferences land after it, so players marked
-  'Currently Being Assessed' are flagged in the caveats for you to check.
+  snapshots FPL's data. When a deadline comes within 24h or 3h it also emails a
+  board - two per gameweek. The T-3h report is the one to act on: it lands after
+  the press conferences that resolve 'Currently Being Assessed', which the T-24h
+  planning report fires ahead of.
 
 ${BOLD}Useful commands${RESET}
   Invoke now:      aws lambda invoke --function-name ${STACK_PREFIX}-poll-${ENVIRONMENT} --region ${AWS_REGION} /dev/stdout
   Force an email:  aws lambda invoke --function-name ${STACK_PREFIX}-poll-${ENVIRONMENT} --region ${AWS_REGION} \\
-                     --cli-binary-format raw-in-base64-out --payload '{"force_tier":"48h"}' /dev/stdout
+                     --cli-binary-format raw-in-base64-out --payload '{"force_tier":"24h"}' /dev/stdout
   Tail logs:       sam logs --stack-name ${STACK_NAME} --region ${AWS_REGION} --tail
   Local run:       sam local invoke PollFunction --event events/scheduled.json --template-file ${BUILD_DIR}/template.yaml
 

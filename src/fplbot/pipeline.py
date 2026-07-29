@@ -591,17 +591,16 @@ def _build_availability_signals(
             news_age_hours=news_age,
         )
 
-    # Fires on every report, not just provisional ones. When there were three
-    # tiers this was suppressed at T-3h because the news had landed by then and a
-    # later report would resolve it anyway. With a single T-24h notification
-    # neither is true: some press conferences land after this run and nothing
-    # follows to correct it, so the count has to be stated every time.
+    # Suppressed on the confirmed tier: by T-3h the pressers have happened, so a
+    # player still carrying this flag is a genuine unknown rather than one we are
+    # simply early for. On the T-24h report it is the opposite - the flag means
+    # "ask again later", and the T-3h report is where that answer arrives.
     awaiting = sum(1 for s in signals.values() if s.awaiting_press_conference)
-    if awaiting:
+    if awaiting and not run_context.is_confirmed_phase:
         run_context.data_quality.add_caveat(
-            f"{awaiting} player(s) are listed as 'Currently Being Assessed'. Some managers' "
-            "press conferences land after this run, and no later report follows to resolve "
-            "them - check their status yourself before the deadline."
+            f"{awaiting} player(s) are listed as 'Currently Being Assessed'. Their status "
+            "will be resolved by managers' press conferences, which land after this run. "
+            "The T-3h report is the one to act on for them."
         )
 
     return signals

@@ -92,44 +92,43 @@ class TestDueTier:
             (72, None),  # outside the window
             (49, None),  # the old 48h tier no longer fires
             (25, None),  # just outside 24h
-            (23.5, "24h"),  # crossed
-            (4, "24h"),  # still the only tier
-            (0.5, "24h"),  # right up to the deadline
+            (23.5, "24h"),  # crossed the planning tier
+            (4, "24h"),  # still the loosest uncrossed tier
+            (2.5, "3h"),  # team news has landed - the one to act on
+            (0.5, "3h"),
         ],
     )
     def test_tier_selection(self, hours_remaining: float, expected: str | None) -> None:
         assert due_tier(int(hours_remaining * HOUR)) == expected
 
-    def test_a_late_run_still_sends_once(self) -> None:
-        """A missed schedule must not mean a skipped gameweek.
+    def test_returns_the_tightest_unsent_tier(self) -> None:
+        """A late run should send current advice, not replay a stale view.
 
-        With one tier there is nothing tighter to fall through to, so a run that
-        fires late still sends - the advice is simply closer to the deadline than
-        intended.
+        If the 24h run already fired and we are now at T-2h, the right answer is
+        the 3h tier - the one with the freshest team news - not a repeat of the
+        planning report.
         """
-        assert due_tier(2 * HOUR) == "24h"
+        assert due_tier(2 * HOUR, already_sent={"24h"}) == "3h"
 
     def test_none_after_the_deadline(self) -> None:
         assert due_tier(-HOUR) is None
         assert due_tier(0) is None
 
     def test_respects_already_sent(self) -> None:
-        """The whole point of one tier: exactly one email per deadline."""
-        assert due_tier(int(1.5 * HOUR), already_sent={"24h"}) is None
-        assert due_tier(int(23 * HOUR), already_sent={"24h"}) is None
+        assert due_tier(int(1.5 * HOUR), already_sent={"24h", "3h"}) is None
 
 
 class TestPhase:
-    def test_the_scheduled_tier_is_the_one_to_act_on(self) -> None:
-        """With a single notification there is no later report to defer to, so
-        'wait for the next one' stopped being advice we can give."""
-        assert is_confirmed_phase("24h") is True
+    def test_only_the_three_hour_tier_is_confirmed(self) -> None:
+        """The T-24h report is provisional and must be labelled as such.
 
-    def test_tiers_outside_the_window_stay_provisional(self) -> None:
-        """Only reachable via `force_tier`, and further from the deadline than a
-        scheduled run - so more team news is still to come."""
+        For a Saturday 11:00 deadline it lands Friday 11:00, ahead of some of the
+        Friday-afternoon press conferences that resolve 'Currently Being
+        Assessed'. By T-3h those have happened.
+        """
+        assert is_confirmed_phase("3h") is True
+        assert is_confirmed_phase("24h") is False
         assert is_confirmed_phase("48h") is False
-        assert is_confirmed_phase("3h") is False
 
     def test_tier_labels_are_stable(self) -> None:
         """The label is part of the idempotency key.
@@ -173,7 +172,7 @@ class TestDeadlineInfo:
         event = bootstrap.events[0]
 
         assert DeadlineInfo(event, 23 * HOUR).within_window is True
-        # The window is derived from the tier list, so dropping to a single
-        # 24h tier narrowed it - 47h used to be inside it.
+        # The window is derived from the loosest tier, which is now 24h -
+        # 47h was inside it when a 48h tier existed.
         assert DeadlineInfo(event, 47 * HOUR).within_window is False
         assert DeadlineInfo(event, -HOUR).within_window is False

@@ -314,22 +314,19 @@ def _masthead(context: RunContext) -> str:
 def _status_strip(context: RunContext) -> str:
     """Phase banner and data-quality line.
 
-    The scheduled T-24h run is the only report for a deadline, so it is labelled
-    as the one to act on. Anything else - a `force_tier` invocation from outside
-    the window - is labelled provisional, because it is further out and more team
-    news is still to come.
+    The T-24h report is provisional and must be labelled as such: some managers'
+    press conferences have not happened yet and part of the injury table is still
+    "Currently Being Assessed". The T-3h report is the one to act on, because by
+    then those pressers have landed.
     """
     is_confirmed = context.is_confirmed_phase
     colour = COLOURS["confirmed"] if is_confirmed else COLOURS["provisional"]
     soft = COLOURS["confirmed_soft"] if is_confirmed else COLOURS["provisional_soft"]
     label = "CONFIRMED" if is_confirmed else "PROVISIONAL"
-    # No "a confirmed report follows" on the provisional branch any more: with a
-    # single T-24h notification there is no later report to wait for, and
-    # promising one that never arrives is worse than saying nothing.
     banner = (
-        "the only report for this deadline - act on it"
+        "team news has landed - this is the report to act on"
         if is_confirmed
-        else "sent outside the usual notification window; team news may still move"
+        else "team news is still moving; a confirmed report follows at T-3h"
     )
 
     quality = context.data_quality
@@ -870,9 +867,9 @@ def _caveats(quality: DataQuality, context: RunContext) -> str:
 
     if not context.is_confirmed_phase:
         items.append(
-            "This report was produced outside the usual T-24h notification window, so it "
-            "is further from the deadline than a scheduled run and more team news is "
-            "still to come."
+            "This is the T-24h planning report. Managers' press conferences for a weekend "
+            "fixture typically land Thursday and Friday afternoon, some of them after this "
+            "run. The T-3h report will resolve most of the outstanding fitness questions."
         )
 
     if not context.season_has_started:

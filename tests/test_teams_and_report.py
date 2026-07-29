@@ -106,7 +106,7 @@ def a_context(*, confirmed: bool = False) -> RunContext:
         gameweek=3,
         deadline_epoch=1_786_662_000,
         seconds_to_deadline=86_400,
-        tier="3h" if confirmed else "48h",
+        tier="3h" if confirmed else "24h",
         is_confirmed_phase=confirmed,
         season_has_started=True,
         data_quality=quality,
@@ -136,15 +136,14 @@ class TestRendering:
             assert heading in html
 
     def test_provisional_phase_is_prominent(self) -> None:
-        """Only reachable via `force_tier` now that there is a single scheduled
-        tier, and it must not promise a follow-up report that never arrives."""
+        """The T-24h report must be labelled as provisional, and must point at
+        the confirmed one that follows."""
         board = Board({}, [], [], [])
 
         html = render_html(a_context(confirmed=False), board)
 
         assert "PROVISIONAL" in html
-        assert "team news may still move" in html
-        assert "T-3h" not in html, "there is no later report to defer to"
+        assert "T-3h" in html
 
     def test_confirmed_phase_says_act_on_this(self) -> None:
         board = Board({}, [], [], [])

@@ -306,7 +306,7 @@ class TestWarnings:
             ),
         )
 
-        assert any("presser" in w for w in captain_warnings(score, TUNABLES))
+        assert any("T-3h" in w for w in captain_warnings(score, TUNABLES))
 
     def test_availability_warning_names_the_stakes(self) -> None:
         score = a_score(1, availability=AvailabilitySignal(element_id=1, risk=0.2))

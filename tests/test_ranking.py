@@ -191,7 +191,7 @@ class TestConfidence:
     def test_confidence_is_independent_of_attractiveness(self) -> None:
         """Two separate axes, implying different actions.
 
-        A superb differential with unclear fitness is 'check the presser', not 'skip'.
+        A superb differential with unclear fitness is 'wait for T-3h', not 'skip'.
         """
         great_but_uncertain = a_score(
             1,
@@ -234,7 +234,7 @@ class TestWarnings:
             ),
         )
 
-        assert any("presser" in warning for warning in warnings_for(score))
+        assert any("T-3h" in warning for warning in warnings_for(score))
 
     def test_transfer_outflow_warning(self) -> None:
         score = a_score(

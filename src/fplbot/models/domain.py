@@ -377,7 +377,7 @@ class RunContext:
     gameweek: int
     deadline_epoch: int
     seconds_to_deadline: int
-    tier: str  # "48h" | "24h" | "3h"
+    tier: str  # "24h" | "3h"
     is_confirmed_phase: bool  # the scheduled T-24h run; the one to act on
     season_has_started: bool
     data_quality: DataQuality = field(default_factory=DataQuality)

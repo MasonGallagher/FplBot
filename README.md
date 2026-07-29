@@ -79,21 +79,22 @@ imports perfectly on your machine and fails inside Lambda with an error naming a
 ### Two phases, and why the second one is the important one
 
 The bot polls **hourly**, at seven minutes past, Europe/London. Every run takes a
-snapshot. Only the first run inside **24 hours** of the deadline sends an email -
-one per gameweek, roughly 38 a season.
+snapshot. Two runs per deadline send an email - **T-24h** and **T-3h** - so roughly
+two a week in season.
 
-That single report is the one to act on, because it is the only one. The trade is
-real and worth knowing: on the live injury table, **23 of 44 listed players are
-"Currently Being Assessed"** - over half. That status is precisely what a manager's
-press conference resolves, and pressers for a Saturday fixture land Thursday and
-Friday afternoon. T-24h for a Saturday 11:00 deadline is **Friday 11:00** - later
-than the old T-48h run and better informed for it, but ahead of some of those
-pressers, and nothing follows to correct them. Players in that state are counted
-in the caveats of every report so you can check them yourself.
+The T-3h run is the one to act on, and this is not a detail. On the live injury
+table, **23 of 44 listed players are "Currently Being Assessed"** - over half.
+That status is precisely what a manager's press conference resolves, and pressers
+for a Saturday fixture land Thursday and Friday afternoon. T-24h for a Saturday
+11:00 deadline is **Friday 11:00**, ahead of some of them - early enough to plan a
+transfer and watch a price change, but labelled provisional. T-3h is Saturday
+08:00, after all of them.
 
-A single 48-hour run therefore guesses on the majority of its injury cases. The
-48h and 24h emails are labelled `PROVISIONAL` in a large amber banner; the 3h one
-is labelled `CONFIRMED`.
+A run that fires before the pressers therefore guesses on a meaningful share of
+its injury cases, which is why the T-24h email is labelled `PROVISIONAL` in a
+large amber banner and the T-3h one `CONFIRMED`. There was once a T-48h tier as
+well; it was dropped because it fired before *any* press conference and was
+superseded by both of the others.
 
 ### The objective is rank, not points
 

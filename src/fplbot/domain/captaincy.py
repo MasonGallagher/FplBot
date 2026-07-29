@@ -193,7 +193,7 @@ def captain_warnings(score: PlayerScore, tunables: ModelTunables) -> list[str]:
 
     if availability.awaiting_press_conference:
         warnings.append(
-            "Listed as 'Currently Being Assessed' - confirm the presser before captaining."
+            "Listed as 'Currently Being Assessed' - do not captain until the T-3h report."
         )
     if availability.risk >= 0.1:
         warnings.append(

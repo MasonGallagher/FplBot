@@ -234,10 +234,8 @@ class TestFullRun:
         assert len(wired["email"].sent) == 1
         message = wired["email"].sent[0]
         assert "GW1" in message["subject"]
-        # The scheduled tier is the only report for this deadline, so it is
-        # marked FINAL. It read "provisional" when this ran on the 48h tier and a
-        # T-3h report was still to come.
-        assert "FINAL" in message["subject"]
+        # T-24h is the planning report: a confirmed one still follows at T-3h.
+        assert "provisional" in message["subject"]
         assert "T-24h" in message["subject"]
 
     @respx.mock
@@ -283,18 +281,13 @@ class TestFullRun:
         assert wired["archive"].objects, "raw payloads should be archived too"
 
     @respx.mock
-    def test_the_scheduled_report_is_marked_confirmed(self, wired) -> None:
-        """The only report for the deadline, so it is the one to act on.
-
-        A late run - here T-2h, after a missed schedule - still carries the 24h
-        tier and is still marked confirmed. There is nothing tighter to fall
-        through to.
-        """
+    def test_the_three_hour_report_is_marked_confirmed(self, wired) -> None:
+        """The one the user should act on - team news has landed by T-3h."""
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
         outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 2 * HOUR)
 
-        assert outcome.tier == "24h"
+        assert outcome.tier == "3h"
         assert "FINAL" in wired["email"].sent[0]["subject"]
         assert "CONFIRMED" in wired["email"].sent[0]["html"]
 
@@ -317,20 +310,20 @@ class TestIdempotency:
         assert len(wired["email"].sent) == 1
 
     @respx.mock
-    def test_exactly_one_email_per_deadline(self, wired) -> None:
-        """The point of collapsing to a single tier.
+    def test_exactly_two_emails_per_deadline(self, wired) -> None:
+        """The lock is per (gameweek, tier), not per gameweek.
 
-        Every hourly run from T-24h down to the deadline crosses the same tier,
-        so the first takes the lock and the rest are suppressed. Previously these
-        offsets straddled the 48h and 24h tiers and produced two emails.
+        Every hourly run between T-24h and T-3h crosses the same 24h tier, so one
+        email goes out and the rest are suppressed; crossing into T-3h opens the
+        second and last one. Five runs, two emails.
         """
         stub_endpoints(wired["bootstrap"], wired["fixtures"])
 
-        for offset in (23, 20, 12, 4, 1):
+        for offset in (23, 20, 12, 2, 1):
             pipeline.run(now_epoch=DEADLINE_EPOCH - offset * HOUR)
 
-        assert len(wired["email"].sent) == 1
-        assert wired["store"].locks == {(1, "24h")}
+        assert len(wired["email"].sent) == 2
+        assert wired["store"].locks == {(1, "24h"), (1, "3h")}
 
     @respx.mock
     def test_force_tier_still_respects_the_lock(self, wired) -> None:
