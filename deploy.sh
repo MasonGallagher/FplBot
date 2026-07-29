@@ -81,9 +81,13 @@ SCHEDULES_ENABLED="true"
 LOG_LEVEL="INFO"
 CONTACT_URL="https://github.com/MasonGallagher/fplBot"
 ODDS_API_KEY_PARAMETER=""
-ALARM_EMAIL="masongallagher90@gmail.com"
+# Deliberately empty. These are personal addresses and belong in .env, which is
+# gitignored - not in a file that gets committed and shared. deploy.sh prompts
+# for them on a first run and main() refuses to deploy without EMAIL_FROM and
+# EMAIL_TO, so an unset value fails loudly rather than mailing the wrong person.
+ALARM_EMAIL=""
 EMAIL_FROM=""
-EMAIL_TO="masongallagher90@gmail.com"
+EMAIL_TO=""
 GITHUB_CONNECTION_ARN=""
 GITHUB_REPOSITORY="MasonGallagher/fplBot"
 GITHUB_BRANCH="main"

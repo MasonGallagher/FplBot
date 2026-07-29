@@ -86,7 +86,7 @@ def build_message(
     """
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    # A display name is what turns "masongallagher90@gmail.com" in the inbox list
+    # A display name is what turns a bare "bot@example.com" in the inbox list
     # into "fplBot". formataddr quotes and encodes it correctly.
     message["From"] = formataddr((SENDER_NAME, sender))
     message["To"] = ", ".join(recipients)
