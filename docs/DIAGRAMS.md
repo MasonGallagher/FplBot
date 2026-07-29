@@ -164,8 +164,8 @@ flowchart TB
 
     subgraph aws["fplBot — AWS account, eu-west-1"]
         LAMBDA["Poll function<br/>ingest, score, rank, render"]
-        STORE[("DynamoDB<br/>snapshots, locks,<br/>predictions, aliases")]
-        ARCHIVE[("S3<br/>raw payloads,<br/>rendered reports")]
+        STORE["DynamoDB<br/>snapshots, locks,<br/>predictions, aliases"]
+        ARCHIVE["S3<br/>raw payloads,<br/>rendered reports"]
     end
 
     USER(["You<br/>inbox"])
@@ -188,25 +188,25 @@ absence becomes a named caveat in the email instead of an exception.
 ```mermaid
 flowchart TB
     subgraph sched["EventBridge Scheduler — Europe/London, not UTC"]
-        S1["PollSchedule<br/>cron&#40;7 * * * ? *&#41;<br/>hourly at :07"]
-        S2["BackfillSchedule<br/>cron&#40;17 3 ? * TUE *&#41;<br/>weekly"]
+        S1["PollSchedule<br/>cron(7 * * * ? *)<br/>hourly at :07"]
+        S2["BackfillSchedule<br/>cron(17 3 ? * TUE *)<br/>weekly"]
     end
 
     subgraph compute["Lambda — arm64, Python 3.13"]
         F1["PollFunction<br/>1024 MB · 120 s<br/>reserved concurrency 1"]
         F2["BackfillFunction<br/>1024 MB · 600 s<br/>history + grading"]
-        LAYER["DependencyLayer<br/>numpy, httpx, pydantic,<br/>orjson, selectolax — 126 MB"]
+        LAYER["DependencyLayer<br/>numpy, httpx, pydantic<br/>orjson, selectolax<br/>126 MB"]
     end
 
     subgraph data["Storage"]
-        DDB[("DynamoDB<br/>fplbot-state-{env}<br/>on-demand · TTL 400d · PITR")]
-        S3B[("S3<br/>fplbot-raw-{env}-{acct}<br/>Glacier IR after 90d")]
+        DDB["DynamoDB<br/>fplbot-state-{env}<br/>on-demand, TTL 400d<br/>PITR enabled"]
+        S3B["S3<br/>fplbot-raw-{env}-{acct}<br/>Glacier IR after 90d"]
         SSM["SSM Parameter Store<br/>Odds API key, SecureString"]
     end
 
     subgraph obs["Observability"]
-        CW["CloudWatch<br/>logs · EMF metrics · dashboard"]
-        ALARMS["6 alarms<br/>schema drift, invariants,<br/>errors, silence, quota, DLQ"]
+        CW["CloudWatch<br/>logs, EMF metrics<br/>dashboard"]
+        ALARMS["6 alarms<br/>schema drift, invariants<br/>errors, silence<br/>quota, DLQ"]
         SNS(["SNS<br/>alarm topic"])
     end
 
@@ -272,7 +272,7 @@ flowchart TD
         W3["Resolve player identities<br/>photo code → cache → exact → fuzzy"]
         W4["Transfer-flow analysis<br/>→ availability signals"]
         W5["Score every player<br/>Monte Carlo, 4000 samples"]
-        W6["Rank<br/>buy board · captains · wildcard"]
+        W6["Rank<br/>buy board, captains<br/>wildcard"]
         W7["Store predictions<br/>for later grading"]
         W8["Render HTML + plain text"]
         W1 --> W2
@@ -330,7 +330,7 @@ sequenceDiagram
             EXT-->>L: 200 · or failure → last-known-good
         end
         L->>D: read recent snapshots (transfer velocity)
-        L->>L: resolve identities · score · rank
+        L->>L: resolve identities, score, rank
         L->>D: store predictions for later grading
         L->>L: render HTML + plain text
         L->>S3: archive rendered report
@@ -349,10 +349,10 @@ whether the model was any good.
 ```mermaid
 flowchart TD
     P1["Poll, T-24h and T-3h<br/>score and rank players"]
-    P2[("Store predictions<br/>PRED-season-gw / tier<br/>mean, floor, ceiling,<br/>P of haul")]
+    P2["Store predictions<br/>mean, floor, ceiling<br/>and P of haul"]
     M["The gameweek<br/>is played"]
     P3["Hourly poll keeps<br/>snapshotting"]
-    P4[("Snapshot carries<br/>event points<br/>the ground truth")]
+    P4["Snapshot carries<br/>event points"]
     B{"Current gameweek<br/>finished AND<br/>data checked?"}
     SKIP(["Skip - bonus points<br/>may still be pending"])
     G["Backfill grades it<br/>RMSE, Spearman,<br/>Brier, coverage"]
@@ -441,7 +441,7 @@ application template could put the pipeline that fixes it into `ROLLBACK_FAILED`
 ```mermaid
 flowchart LR
     DEV(["git push<br/>→ merge to main"]) --> SRC["Source<br/>CodeStar connection"]
-    SRC --> TEST["Test<br/>ruff · pytest · cfn-lint<br/>no AWS credentials"]
+    SRC --> TEST["Test<br/>ruff, pytest, cfn-lint<br/>no AWS credentials"]
     TEST --> BUILD["Build<br/>sam build + package"]
     BUILD --> DD["Deploy dev<br/>DryRun=true<br/>schedules OFF"]
     DD --> SMOKE["Smoke test<br/>invoke dev, dry-run"]
