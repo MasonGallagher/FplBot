@@ -81,6 +81,18 @@ Parameters:
     Default: ""
     Description: Optional address for pipeline success/failure notifications.
 
+  OddsApiKeyParameter:
+    Type: String
+    Default: ""
+    Description: >
+      SSM Parameter Store name holding The Odds API key, e.g.
+      /fplbot/prod/odds-api-key. The pipeline was not passing this through at
+      all, so both stacks it deploys defaulted to empty and every report said
+      "Odds API not configured" regardless of what was in SSM. The key itself
+      never appears here or in CloudFormation - only the parameter NAME travels,
+      and the function reads the SecureString at runtime under an IAM policy
+      scoped to that one parameter.
+
 Conditions:
   HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, ""]]
 
@@ -293,7 +305,8 @@ Resources:
                     "DryRun": "true",
                     "SchedulesEnabled": "false",
                     "LogLevel": "DEBUG",
-                    "CreateSenderIdentity": "true"
+                    "CreateSenderIdentity": "true",
+                    "OddsApiKeyParameter": "${OddsApiKeyParameter}"
                   }
               InputArtifacts:
                 - Name: BuildOutput
@@ -352,7 +365,8 @@ Resources:
                     "DryRun": "false",
                     "SchedulesEnabled": "true",
                     "LogLevel": "INFO",
-                    "CreateSenderIdentity": "false"
+                    "CreateSenderIdentity": "false",
+                    "OddsApiKeyParameter": "${OddsApiKeyParameter}"
                   }
               InputArtifacts:
                 - Name: BuildOutput

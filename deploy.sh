@@ -522,7 +522,7 @@ deploy_pipeline() {
       "EmailTo=${EMAIL_TO}" \
       "AlarmEmail=${ALARM_EMAIL}" \
       "Season=${SEASON}" \
-      "NotificationEmail=${notification_email}" \
+      "NotificationEmail=${notification_email}"       "OddsApiKeyParameter=${ODDS_API_KEY_PARAMETER}" \
     --tags Project=fplbot Component=pipeline \
     || die "Pipeline deployment failed"
 
