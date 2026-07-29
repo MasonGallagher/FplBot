@@ -161,6 +161,67 @@ class DynamoStore:
         logger.info("Stored snapshot", extra={"sk": sk, "gz_bytes": len(blob)})
         return sk
 
+    def put_predictions(self, gameweek: int, tier: str, records: list[dict[str, Any]]) -> None:
+        """Store what we predicted, so it can be graded once the gameweek is played.
+
+        One gzipped item per (gameweek, tier) rather than one per player. Six
+        hundred separate writes would be six hundred write units for data that is
+        only ever read back as a whole set, and the same gzip trick that keeps a
+        snapshot at ~60 KB keeps this comfortably inside the 400 KB item limit.
+
+        TTL matches the snapshot series at 400 days, and for the same reason: the
+        pairs of (what we said, what happened) ARE the training set for fitting
+        the tunables. Expiring them after a month would throw away the only
+        record of how the model behaved over a season, which is precisely the
+        thing SPEC 5.5 needs to replace the hand-picked priors.
+        """
+        blob = gzip.compress(orjson.dumps({"records": records}), compresslevel=6)
+        self._table.put_item(
+            Item={
+                "pk": Keys.prediction_pk(self._season, gameweek),
+                "sk": Keys.prediction_sk(tier),
+                "gz": blob,
+                "bytes": len(blob),
+                "count": len(records),
+                "ttl": int(time.time()) + SNAPSHOT_TTL_DAYS * DAY_SECONDS,
+            }
+        )
+        logger.info(
+            "Stored predictions",
+            extra={
+                "gameweek": gameweek,
+                "tier": tier,
+                "players": len(records),
+                "gz_bytes": len(blob),
+            },
+        )
+
+    def get_predictions(self, gameweek: int, tier: str) -> list[dict[str, Any]]:
+        """Read back one gameweek+tier's predictions. Empty list when absent.
+
+        Absent is a normal state, not an error: nothing was stored for a gameweek
+        the bot did not notify on, and the grader has to treat that as "nothing
+        to do" rather than as a failure.
+        """
+        try:
+            response = self._table.get_item(
+                Key={
+                    "pk": Keys.prediction_pk(self._season, gameweek),
+                    "sk": Keys.prediction_sk(tier),
+                }
+            )
+        except ClientError as exc:
+            logger.warning("Prediction read failed", extra={"error": str(exc)[:200]})
+            return []
+
+        item = response.get("Item")
+        if not item or "gz" not in item:
+            return []
+
+        payload = orjson.loads(gzip.decompress(bytes(item["gz"])))
+        records: list[dict[str, Any]] = payload.get("records", [])
+        return records
+
     def recent_snapshots(self, limit: int = 48) -> list[dict[str, Any]]:
         """Most recent snapshots, newest first.
 

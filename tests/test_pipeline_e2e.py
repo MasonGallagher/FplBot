@@ -49,6 +49,13 @@ class FakeDynamoStore:
         self.last_known_good: dict[str, dict] = {}
         self.aliases: dict[str, dict[str, int]] = {}
         self.player_series: dict[int, list[dict]] = {}
+        self.predictions: dict[tuple[int, str], list[dict]] = {}
+
+    def put_predictions(self, gameweek: int, tier: str, records: list[dict]) -> None:
+        self.predictions[(gameweek, tier)] = records
+
+    def get_predictions(self, gameweek: int, tier: str) -> list[dict]:
+        return self.predictions.get((gameweek, tier), [])
 
     def put_snapshot(self, payload: dict, *, timestamp: str | None = None) -> str:
         self.snapshots.append(payload)
@@ -308,6 +315,38 @@ class TestIdempotency:
         assert first.status == "sent"
         assert second.status == "suppressed"
         assert len(wired["email"].sent) == 1
+
+    @respx.mock
+    def test_predictions_are_stored_for_later_grading(self, wired) -> None:
+        """The feedback loop. Without this the model can never be told whether it
+        was right - `_log_benchmark` only compares it against FPL's own estimate,
+        which is another guess rather than truth."""
+        stub_endpoints(wired["bootstrap"], wired["fixtures"])
+
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
+
+        stored = wired["store"].predictions
+        assert (1, "24h") in stored, "the notifying run must record what it predicted"
+
+        records = stored[(1, "24h")]
+        assert records, "an empty prediction set cannot be graded"
+        first = records[0]
+        for field in ("element_id", "mean", "floor", "ceiling", "haul_probability"):
+            assert field in first, f"{field} is needed to grade the distribution"
+        assert first["floor"] <= first["mean"] <= first["ceiling"]
+
+    @respx.mock
+    def test_a_snapshot_carries_actual_points_for_grading(self, wired) -> None:
+        """Ground truth rides along on the hourly snapshot, so grading costs no
+        extra HTTP: the poll always runs after a gameweek settles and well before
+        the next deadline resets the field."""
+        stub_endpoints(wired["bootstrap"], wired["fixtures"])
+
+        pipeline.run(now_epoch=DEADLINE_EPOCH - 100 * HOUR)
+
+        players = wired["store"].snapshots[0]["players"]
+        assert players
+        assert "event_points" in players[0]
 
     @respx.mock
     def test_exactly_two_emails_per_deadline(self, wired) -> None:

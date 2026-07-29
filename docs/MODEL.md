@@ -463,3 +463,92 @@ The email reports the spread across restarts. If they all converge within half a
 point, it says "almost certainly optimal"; if they do not, it says "very good
 rather than provably optimal". That is the honest version of a claim we cannot
 prove.
+
+---
+
+## 8. Knowing whether any of this works
+
+Every number above is a **starting prior**, not a finding. SPEC §5 says so
+explicitly, and §5.5 asks for a fit against historical gameweeks. That fit is not
+possible without first knowing how the current model actually performs — so this
+section is about the measurement, not the model.
+
+### The gap this closes
+
+`pipeline._log_benchmark` compares our xP against FPL's `ep_next` on every run.
+That is a useful smoke test — a model that cannot beat `ep_next` is not worth
+shipping — but it compares us against **another estimate, not against truth**.
+Agreeing with FPL means we agree with FPL. It cannot tell us either of us is
+right, and it says nothing at all about whether the *distribution* is honest.
+
+That last part matters more here than it would elsewhere. The ranking objective is
+
+```
+score = xP - lambda * (ownership x xP) + mu * ceiling
+```
+
+**The ceiling is a ranking term.** If P90 is systematically overstated, the board
+is ordered by a number that does not mean what it claims — and the mean could be
+perfectly calibrated while the ordering is driven by a miscalibrated tail.
+Nothing in a run would say so.
+
+### How it works
+
+| Step | Where |
+|---|---|
+| Predictions written when a board is sent | `pipeline.py` → `store.put_predictions` |
+| Actual points ride along on the hourly snapshot | `sources/fpl.py` → `event_points` |
+| Graded once the gameweek settles | `handlers/backfill.py` → `_grade_predictions` |
+| The metrics themselves | `domain/calibration.py` — pure functions |
+
+One gzipped DynamoDB item per `(gameweek, tier)` rather than 600 per-player
+writes, with the same 400-day TTL as the snapshot series — because the pairs of
+*(what we said, what happened)* **are** the training set §5.5 needs.
+
+Grading costs no extra HTTP. `event_points` is already on the bootstrap the poll
+fetches hourly, and the poll always runs long after the last match of a gameweek
+and long before the next deadline resets the field.
+
+### The four metrics, and why each
+
+| Metric | Answers |
+|---|---|
+| **RMSE / MAE** | Is the central estimate any good at all? |
+| **Spearman** | Does the *ordering* work? The one that matters most — a board is a ranking, and a model can be badly biased in level while ordering players perfectly. |
+| **Brier on P(haul)** | Are the tail probabilities honest? Saying 20% and being right 45% of the time is a failure however good the mean is. |
+| **P10–P90 coverage** | The sharpest. ~80% of outcomes should land inside the stated interval. Materially less means the distribution is too narrow and the ceiling is overstated; materially more means the ceiling is not discriminating at all. |
+
+Reported for all players and again for **predicted starters only**, because the
+full list is dominated by squad filler who were always going to score zero, and
+predicting that correctly flatters every metric.
+
+Both tiers are graded separately. That comparison is the entire reason to store
+both: if the team news available at T-3h is worth anything, it shows up as a
+difference between the two scores. Collapsing them would hide the one comparison
+worth making.
+
+### Two deliberate choices
+
+**Logged, not emitted as CloudWatch metrics.** The stack already publishes 14
+custom metrics against a free tier of 10, and custom metrics are the largest line
+item in a bill otherwise dominated by nothing. These fire once a week and are
+read in Logs Insights when somebody is asking the question, which does not
+justify a per-metric monthly charge each.
+
+**Grading is skipped unless the current gameweek is `finished` *and*
+`data_checked`.** `event_points` holds the *current* gameweek's points, so it is
+only the right answer while that gameweek is still current. Grading GW7's
+predictions against GW8's scoreline would look like a catastrophically bad model
+rather than like a bug. `data_checked` is the stricter flag and the one that
+matters: `finished` goes true at the final whistle, but bonus points land a day
+or two later, so grading on `finished` alone would mark every player down by
+their unawarded bonus.
+
+### What to do with it
+
+Wait for real data. In pre-season every attacking rate falls back to a positional
+prior, so a Spearman computed now is comparing two sets of priors rather than two
+models. From roughly GW5, the numbers become worth acting on — and only then does
+fitting `ownership_penalty_lambda`, `ceiling_bonus_mu`, `shrinkage_prior_minutes`
+and the rest against the vaastav archive become something that can be *evaluated*
+rather than guessed at.

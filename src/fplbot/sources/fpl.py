@@ -152,6 +152,8 @@ def build_snapshot(bootstrap: Bootstrap) -> dict[str, Any]:
     * `transfers_in_event` / `transfers_out_event` for intra-gameweek velocity,
     * `selected` for the ownership denominator that normalises it,
     * `now_cost` and `cost_change_event` for the price model,
+    * `event_points`, the actual points scored - the ground truth that
+      `domain/calibration.py` grades our stored predictions against,
     * `price_change_percent`, which is the highest-value unknown in the spec.
       It is currently '0' for everyone. If it turns out to encode progress
       towards the next price change it replaces most price modelling, and the
@@ -180,6 +182,14 @@ def build_snapshot(bootstrap: Bootstrap) -> dict[str, Any]:
                 "news_added": e.news_added,
                 "form": e.form,
                 "ep_next": e.ep_next,
+                # What the player ACTUALLY scored in the current gameweek. This
+                # is the ground truth half of calibration, and putting it here
+                # means grading costs no extra HTTP: the hourly poll already runs
+                # long after the last match of a gameweek and long before the
+                # next deadline resets the field, so a settled value is always
+                # captured. Bonus points land a day or two after the whistle,
+                # which the hourly cadence absorbs without trying.
+                "event_points": e.event_points,
             }
             for e in bootstrap.elements
         ],
