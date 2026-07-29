@@ -16,6 +16,60 @@ a deadline approaching.
 | Tuesday `03:17` London | Backfill runs, ~120 players |
 | Off-season | Snapshots daily, notifies never, exits `no_deadline` |
 
+## Cost, and the switch that controls most of it
+
+CloudWatch custom metrics were the largest line item in this account by a wide
+margin — 19 published against a free tier of 10, at $0.30 each per month. That
+was several times the cost of the Lambda, DynamoDB, S3 and logs combined, all of
+which sit inside their free tiers.
+
+By default the stack now publishes only the three metrics an alarm reads:
+
+| Metric | Alarm |
+|---|---|
+| `SchemaDriftDetected` | `fplbot-prod-schema-drift` |
+| `InvariantViolated` | `fplbot-prod-invariant-violated` |
+| `OddsCreditsRemaining` | `fplbot-prod-odds-quota-low` |
+
+Everything else is **logged instead of published**. Nothing is lost — the values
+are in CloudWatch Logs, queryable in Logs Insights, at about a penny a month.
+
+### When something breaks
+
+```
+./deploy.sh --env prod            # after setting PublishAllMetrics=true
+```
+
+Deploy with `PublishAllMetrics=true`, wait for a run, and every metric and
+dashboard widget comes back. Set it to `false` when you are done. The parameter
+exists so that diagnosing does not need a code change.
+
+Until then, most Dashboard widgets will read "no data". That is expected, not a
+fault.
+
+### Why the alarmed three are not trimmed
+
+An alarm whose metric stops being emitted **does not fail loudly**. It sits in
+`INSUFFICIENT_DATA`, or — with `TreatMissingData: notBreaching`, which these use
+— it simply never fires again. Trimming one of those three would silently switch
+off the schema-drift alarm, which is the one that catches the model producing
+confident, wrong recommendations. `tests/test_observability_gating.py` parses
+`template.yaml` and fails if any alarmed metric is missing from the allowlist.
+
+### Alarms are production-only
+
+Dev deploys with `SchedulesEnabled=false`, so `PollSilenceAlarm` — which fires
+when invocations fall below one in three hours, treating missing data as
+breaching — would sit in `ALARM` permanently and email about a silence that is
+the configured behaviour. An alarm that is always red trains you to ignore the
+channel the real ones arrive on. This also takes the account from 12 provisioned
+alarms to 6, back inside the free ten.
+
+PITR is likewise production-only: the prod snapshot series cannot be
+re-collected, while dev's table can be rebuilt by running the poll.
+
+---
+
 Return statuses, all of which are HTTP 200:
 
 | Status | Meaning |

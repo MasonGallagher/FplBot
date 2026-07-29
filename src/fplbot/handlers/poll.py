@@ -32,11 +32,11 @@ from typing import Any
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from fplbot import pipeline
-from fplbot.observability import logger, metrics, tracer
+from fplbot.observability import PUBLISH_ALL_METRICS, logger, metrics, tracer
 
 
 @logger.inject_lambda_context(log_event=False)
-@metrics.log_metrics(capture_cold_start_metric=True)
+@metrics.log_metrics(capture_cold_start_metric=PUBLISH_ALL_METRICS)
 @tracer.capture_lambda_handler
 def handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
     """Run one poll.
