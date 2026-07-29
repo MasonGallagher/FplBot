@@ -99,9 +99,48 @@ class TestSourceSchemaAssertions:
         """Legitimately empty in pre-season - not a failure."""
         assert check_understat_players([]) is True
 
-    def test_clubelo_column_count(self) -> None:
-        assert check_clubelo_fixture_columns([f"c{i}" for i in range(44)]) is True
-        assert check_clubelo_fixture_columns([f"c{i}" for i in range(30)]) is False
+    def test_clubelo_real_schema_passes(self) -> None:
+        """The live 45-column payload. This used to FAIL, because the check
+        compared against a hardcoded 44 and ClubElo had added a column."""
+        assert check_clubelo_fixture_columns(_clubelo_columns()) is True
+
+    def test_an_added_column_is_not_a_failure(self) -> None:
+        """The false positive that motivated rewriting this.
+
+        `_parse_fixture_row` walks columns by name, so an addition cannot break
+        the clean-sheet sum - and the old message told the reader it would."""
+        assert check_clubelo_fixture_columns([*_clubelo_columns(), "SomethingNew"]) is True
+
+    def test_a_renamed_scoreline_column_is_caught(self) -> None:
+        """What the count check could NOT catch. Rename R:2-0 and the total is
+        unchanged, while the home clean-sheet sum silently loses a term."""
+        columns = [c if c != "R:2-0" else "R:2:0" for c in _clubelo_columns()]
+
+        assert check_clubelo_fixture_columns(columns) is False
+
+    def test_a_dropped_scoreline_column_is_caught(self) -> None:
+        columns = [c for c in _clubelo_columns() if c != "R:3-0"]
+
+        assert check_clubelo_fixture_columns(columns) is False
+
+    def test_missing_named_columns_are_caught(self) -> None:
+        """Home and Away are read by name; without them no row parses at all."""
+        assert (
+            check_clubelo_fixture_columns([c for c in _clubelo_columns() if c != "Away"]) is False
+        )
+
+    def test_no_scoreline_columns_at_all_is_caught(self) -> None:
+        assert check_clubelo_fixture_columns(["Date", "Country", "Home", "Away"]) is False
+
+    def test_the_trailing_gap_is_expected(self) -> None:
+        """ClubElo enumerates scorelines only up to six total goals, so R:7-0
+        does not exist and 1-8% of probability mass is in outcomes it never
+        lists. That is the source's shape, not drift."""
+        columns = _clubelo_columns()
+
+        assert "R:6-0" in columns
+        assert "R:7-0" not in columns
+        assert check_clubelo_fixture_columns(columns) is True
 
     def test_injury_vocabulary_is_closed(self) -> None:
         """An unrecognised value is a semantic change, not a parse error.
@@ -112,3 +151,18 @@ class TestSourceSchemaAssertions:
         assert check_injury_vocabulary({"Ruled Out", "50%"}, {"Not Available"}) is True
         assert check_injury_vocabulary({"Probably Fine"}, {"Not Available"}) is False
         assert check_injury_vocabulary({"50%"}, {"Vibes Based Assessment"}) is False
+
+
+def _clubelo_columns() -> list[str]:
+    """The live /Fixtures header: 4 metadata, 13 goal-difference, 28 scorelines.
+
+    The scorelines are a complete triangle for totals of six goals or fewer -
+    1+2+...+7 = 28 - which is why nothing is missing despite the probabilities
+    summing to less than one.
+    """
+    meta = ["Date", "Country", "Home", "Away"]
+    gd = ["GD<-5", *[f"GD={i}" for i in range(-5, 6)], "GD>5"]
+    scorelines = [
+        f"R:{h}-{a}" for total in range(7) for h in range(total, -1, -1) for a in [total - h]
+    ]
+    return [*meta, *gd, *scorelines]

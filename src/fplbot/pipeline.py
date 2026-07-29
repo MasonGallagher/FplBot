@@ -461,6 +461,7 @@ def _resolve_injuries(
 
     teams_by_name = {t.name: t.id for t in bootstrap.teams}
     out: dict[int, premierinjuries.InjuryRecord] = {}
+    suppressed_bans: list[str] = []
 
     for record in data.records:
         team_id = (
@@ -474,12 +475,38 @@ def _resolve_injuries(
         )
         if resolution.resolved and resolution.element_id is not None:
             out[resolution.element_id] = record
+        elif record.is_suspension:
+            # Not a data-quality failure. PremierInjuries keeps listing players
+            # FPL has removed from the game, and a long ban is the usual reason
+            # it removed them - Mykhailo Mudryk was listed "Suspended" here while
+            # absent from bootstrap-static entirely, so the resolver had nothing
+            # to match against and correctly rejected its best guess ("Gusto",
+            # score 48).
+            #
+            # Reporting that as an unmatched name puts a permanent, unfixable
+            # entry in the caveats, and the caveat list is where genuine
+            # mismatches are meant to stand out - a mismatch on an ACTIVE player
+            # silently drops his injury data, which is the case worth seeing. A
+            # banned player who cannot be selected costs nothing by being absent.
+            suppressed_bans.append(record.name)
 
     # Persist anything newly resolved so this player is never fuzzy-matched again.
     for source_id, (element_id, method, score) in resolver.newly_resolved.items():
         context.store.put_alias(
             "premierinjuries", source_id, element_id, method=method.value, score=score
         )
+
+    if suppressed_bans:
+        # Logged, not surfaced. Worth being able to find; not worth a caveat.
+        logger.info(
+            "Suspended players absent from FPL - excluded from unresolved names",
+            extra={"players": suppressed_bans},
+        )
+        resolver.unresolved = [
+            entry
+            for entry in resolver.unresolved
+            if not any(entry.startswith(f"{name} (premierinjuries") for name in suppressed_bans)
+        ]
 
     logger.info(
         "Resolved injury records",
