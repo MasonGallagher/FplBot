@@ -33,7 +33,9 @@ from typing import Any
 
 from aws_lambda_powertools.utilities.typing import LambdaContext
 
-from fplbot.config import get_settings
+from fplbot.config import NOTIFY_TIERS_SECONDS, get_settings
+from fplbot.domain import calibration
+from fplbot.domain.deadline import tier_label
 from fplbot.http import HttpClient
 from fplbot.models.domain import DataQuality
 from fplbot.observability import logger, metrics, tracer
@@ -45,6 +47,10 @@ from fplbot.storage import DynamoStore, RawArchive
 # 600-second timeout with 1.5-second spacing and a safety margin:
 # 120 x 1.5s = 180s of spacing, plus request time.
 DEFAULT_WATCHLIST_SIZE = 120
+
+# Derived from the tier list so that adding or removing a notification tier does
+# not quietly leave one ungraded.
+TIERS_TO_GRADE = tuple(tier_label(t) for t in sorted(NOTIFY_TIERS_SECONDS))
 
 
 @logger.inject_lambda_context(log_event=False)
@@ -125,12 +131,82 @@ def handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
 
             fetched += 1
 
+        # Grade the last completed gameweek while we still have the bootstrap.
+        graded = _grade_predictions(bootstrap, source_context.store)
+
     elapsed = time.time() - started
     logger.info(
         "Backfill complete",
-        extra={"fetched": fetched, "elapsed_s": round(elapsed, 1)},
+        extra={"fetched": fetched, "elapsed_s": round(elapsed, 1), "graded": graded},
     )
-    return {"statusCode": 200, "body": {"fetched": fetched, "elapsed_s": round(elapsed, 1)}}
+    return {
+        "statusCode": 200,
+        "body": {"fetched": fetched, "elapsed_s": round(elapsed, 1), "graded": graded},
+    }
+
+
+def _grade_predictions(bootstrap, store) -> list[dict[str, Any]]:
+    """Score the last completed gameweek's predictions against what happened.
+
+    This runs here rather than in the poll because the backfill already fires
+    after a gameweek finalises, already holds a bootstrap, and is not on the path
+    of anything the user is waiting for.
+
+    THE ONE SUBTLETY: `event_points` on the bootstrap is the CURRENT gameweek's
+    points. It is only the right answer for the gameweek we are grading while
+    that gameweek is still `is_current`, which stops being true the moment the
+    next deadline passes. So we grade only when the current event is both
+    `finished` and `data_checked`, and skip otherwise rather than silently
+    grading GW7's predictions against GW8's scoreline - which would look like a
+    catastrophically bad model rather than like a bug.
+
+    `data_checked` is the stricter of the two flags and the one that matters:
+    `finished` goes true at the final whistle, but bonus points are added a day
+    or two later, so grading on `finished` alone would mark every player down by
+    their unawarded bonus.
+    """
+    current = next(
+        (e for e in bootstrap.events if e.is_current and e.finished and e.data_checked),
+        None,
+    )
+    if current is None:
+        logger.info("No settled gameweek to grade - skipping calibration")
+        return []
+
+    actuals = {e.id: e.event_points for e in bootstrap.elements}
+    reports: list[dict[str, Any]] = []
+
+    for tier in TIERS_TO_GRADE:
+        stored = store.get_predictions(current.id, tier)
+        if not stored:
+            continue
+
+        records = [calibration.PredictionRecord.from_dict(row) for row in stored]
+        report = calibration.score_predictions(records, actuals, gameweek=current.id, tier=tier)
+        if report is None:
+            continue
+
+        # Logged rather than emitted as CloudWatch custom metrics. The stack
+        # already publishes 14 custom metrics against a free tier of 10, and
+        # metrics are the largest line item in a bill otherwise dominated by
+        # nothing. These fire once a week and are read in Logs Insights when
+        # somebody is actually asking the question, which does not justify a
+        # per-metric monthly charge each.
+        logger.info(
+            "Calibration report",
+            extra={"summary": report.summary_line(), **report.as_dict()},
+        )
+        for note in report.notes:
+            logger.warning("Calibration note", extra={"gameweek": current.id, "note": note})
+
+        reports.append(report.as_dict())
+
+    if not reports:
+        logger.info(
+            "Nothing to grade for the settled gameweek",
+            extra={"gameweek": current.id},
+        )
+    return reports
 
 
 def _select_watchlist(bootstrap, limit: int) -> list[int]:

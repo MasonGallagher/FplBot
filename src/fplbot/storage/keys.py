@@ -79,6 +79,28 @@ class Keys:
 
     NOTIFY_SK = "LOCK"
 
+    # -- stored predictions, for later calibration --------------------------
+    @staticmethod
+    def prediction_pk(season: str, gameweek: int) -> str:
+        """One item per (gameweek, tier), holding every player's prediction.
+
+        Keyed on the gameweek rather than a timestamp for the same reason the
+        notification lock is: the question we ask later is always "what did we
+        say about GW7?", never "what did we say at 14:07 on the Friday".
+        """
+        return f"PRED#{season}#{gameweek}"
+
+    @staticmethod
+    def prediction_sk(tier: str) -> str:
+        """The tier, so the T-24h and T-3h boards are graded separately.
+
+        Keeping them apart is the entire point of storing both: the T-3h run has
+        team news the T-24h run did not, so if the extra information is worth
+        anything it shows up as a difference between these two scores. Collapsing
+        them would hide exactly the comparison worth making.
+        """
+        return tier
+
     # -- last known good ----------------------------------------------------
     @staticmethod
     def lkg_pk(season: str) -> str:

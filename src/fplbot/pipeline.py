@@ -35,7 +35,16 @@ import numpy as np
 
 from fplbot.config import HARD_STALENESS_CEILING_SECONDS, TUNABLES, get_settings
 from fplbot.domain import availability as availability_domain
-from fplbot.domain import captaincy, horizon, invariants, ranking, scoring, squad, teams
+from fplbot.domain import (
+    calibration,
+    captaincy,
+    horizon,
+    invariants,
+    ranking,
+    scoring,
+    squad,
+    teams,
+)
 from fplbot.domain import deadline as deadline_domain
 from fplbot.domain import fixtures as fixtures_domain
 from fplbot.domain.identity import PlayerResolver
@@ -296,6 +305,27 @@ def _produce_and_send(
 
     # -- 13. Benchmark against FPL's own ep_next ---------------------------
     _log_benchmark(scores)
+
+    # -- 13b. Store the predictions so they can be graded later -------------
+    # `_log_benchmark` above compares us against FPL's estimate, which tells us
+    # whether we agree with FPL and nothing about whether either of us is right.
+    # This is the other half: write down what we said, so that once the gameweek
+    # has actually been played the backfill can score it against what happened.
+    #
+    # Deliberately outside the dry-run check. A dry run produces real predictions
+    # from real data and simply does not email them, so they are exactly as
+    # gradeable as any other - and skipping them would leave holes in the series
+    # that later fitting has to work around.
+    try:
+        context.store.put_predictions(
+            run_context.gameweek,
+            run_context.tier,
+            [record.as_dict() for record in calibration.summarise(scores)],
+        )
+    except Exception as exc:
+        # A board the user is waiting for must not be lost because a write we
+        # only need weeks from now failed. Log it and carry on.
+        logger.warning("Could not store predictions", extra={"error": str(exc)[:200]})
 
     # -- 14. Render and send -----------------------------------------------
     html_body = render.render_html(run_context, board)
