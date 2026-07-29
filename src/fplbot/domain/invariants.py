@@ -202,7 +202,10 @@ UNDERSTAT_PLAYER_KEYS = {
 PREMIER_INJURIES_STATUSES = {"Ruled Out", "25%", "50%", "75%"}
 PREMIER_INJURIES_CONDITIONS = {"Currently Being Assessed", "Not Available"}
 
-CLUBELO_FIXTURE_COLUMN_COUNT = 44
+# Informational only - the check asserts structure, not this number. ClubElo
+# served 44 when the spec was written and 45 by late July 2026; both are fine,
+# because the parser keys on column NAMES.
+CLUBELO_FIXTURE_COLUMN_COUNT = 45
 
 
 def check_understat_players(players: list[dict], quality: DataQuality | None = None) -> bool:
@@ -220,18 +223,71 @@ def check_understat_players(players: list[dict], quality: DataQuality | None = N
 
 
 def check_clubelo_fixture_columns(columns: list[str], quality: DataQuality | None = None) -> bool:
-    """Assert the /Fixtures CSV still has its 44 columns.
+    """Assert the /Fixtures CSV still has the SHAPE the derivation depends on.
 
-    We derive clean-sheet probability by summing the `R:x-0` scoreline columns.
-    If the column set changes shape, that sum silently becomes wrong rather than
-    absent, which is why this is checked rather than assumed.
+    This used to compare the column count against a constant, which was the wrong
+    assertion in both directions.
+
+    **Too sensitive.** `_parse_fixture_row` walks columns by name - anything
+    matching `R:h-a` - precisely so a new scoreline is picked up rather than
+    silently dropped. An added column therefore cannot break the sum, but the
+    count check fired anyway, and told the reader the clean-sheet derivation
+    "will be wrong" when it demonstrably was not. A caveat that cries wolf is
+    worse than no caveat, because the section it appears in is where the real
+    integrity failures are reported.
+
+    **Not sensitive enough.** A count says nothing about identity. Renaming
+    `R:1-0` to `R:1:0`, or dropping it while adding an unrelated column, keeps
+    the total at 45 and breaks the sum completely - which is the failure this was
+    supposed to catch.
+
+    So assert the structure instead:
+
+    * the two columns read by name are present;
+    * the scoreline set is non-empty and CONTIGUOUS from zero in both
+      directions, since a gap is exactly what a rename or a drop produces;
+    * the clean-sheet columns we sum actually exist.
+
+    A trailing gap is expected, not a fault: ClubElo enumerates scorelines up to
+    a total of six goals, so `R:7-0` does not exist and roughly 1-8% of
+    probability mass sits in higher-scoring outcomes it never lists.
     """
-    if len(columns) == CLUBELO_FIXTURE_COLUMN_COUNT:
+    present = set(columns)
+    problems: list[str] = []
+
+    missing_named = [c for c in ("Home", "Away") if c not in present]
+    if missing_named:
+        problems.append(f"missing named column(s) {missing_named}")
+
+    scorelines = [c for c in columns if c.startswith("R:")]
+    if not scorelines:
+        problems.append("no R:h-a scoreline columns at all")
+    else:
+        home_cs = sorted(
+            int(c[2:].split("-", 1)[0])
+            for c in scorelines
+            if c.endswith("-0") and c[2:].split("-", 1)[0].isdigit()
+        )
+        away_cs = sorted(
+            int(c[2:].split("-", 1)[1])
+            for c in scorelines
+            if c.startswith("R:0-") and c[2:].split("-", 1)[1].isdigit()
+        )
+        for label, series in (("R:x-0", home_cs), ("R:0-x", away_cs)):
+            if not series:
+                problems.append(f"no {label} columns, so that side's clean sheet cannot be summed")
+            elif series != list(range(len(series))):
+                problems.append(
+                    f"{label} columns are not contiguous from 0 ({series}) - a gap means a "
+                    "column was renamed or dropped, and the clean-sheet sum is now wrong"
+                )
+
+    if not problems:
         return True
+
     detail = (
-        f"ClubElo /Fixtures returned {len(columns)} columns, expected "
-        f"{CLUBELO_FIXTURE_COLUMN_COUNT}. Clean-sheet derivation sums the R:x-0 columns "
-        "and will be wrong if the schema has changed."
+        f"ClubElo /Fixtures schema changed: {'; '.join(problems)}. "
+        f"Clean-sheet derivation sums the R:x-0 columns and is unreliable until this is checked."
     )
     report_invariant_violation("clubelo_fixture_columns", detail)
     if quality:
