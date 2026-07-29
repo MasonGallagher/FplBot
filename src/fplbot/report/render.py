@@ -86,6 +86,9 @@ COLOURS = {
     "masthead": "#111827",
     "masthead_muted": "#9ca3af",
     "accent_soft": "#eef2ff",
+    # The two halves of a spread bar: floor-to-mean, then mean-to-ceiling.
+    "accent_light": "#a5b4fc",
+    "track": "#eef2f7",
     "confirmed_soft": "#dcfce7",
     "provisional_soft": "#fef3c7",
     "danger_soft": "#fee2e2",
@@ -200,6 +203,10 @@ def render_html(context: RunContext, board: Board) -> str:
     # burying it slightly is the honest reflection of how often it applies.
     sections = [
         _buy_board(board),
+        # Directly after the board it visualises, while those names are still in
+        # the reader's head. Returns "" when there are no buys, rather than an
+        # empty chart frame.
+        _spread_chart(board),
         _captain_picks(board),
         _sell_list(board),
         _watchlist(board, context),
@@ -439,6 +446,113 @@ def _buy_row(rec: Recommendation, index: int) -> str:
           {esc(rec.confidence.value)}</span>
       </td>
     </tr>
+    """
+
+
+# ---------------------------------------------------------------------------
+# The spread chart
+# ---------------------------------------------------------------------------
+# Email cannot run JavaScript, Gmail strips <svg> and refuses `data:` image URIs,
+# and rendering a PNG server-side would mean carrying matplotlib - roughly 50 MB
+# into a layer already at half its 250 MB budget, for one picture. So the chart
+# is built from table cells with percentage widths and background colours, which
+# is the one technique that renders identically in Gmail, Outlook and Apple Mail
+# with no dependency and nothing to block.
+#
+# What it plots is the outcome distribution rather than the mean, because the
+# mean is already a column in the table above it and a bar chart of it would add
+# nothing. SPEC's objective is expected *rank* gain, which makes the spread the
+# decision-relevant quantity: a 6.0 xP floor-heavy midfielder and a 6.0 xP
+# boom-or-bust forward are the same number and completely different bets, and
+# that difference is exactly what this makes visible at a glance.
+CHART_PLAYERS = 8
+BAR_HEIGHT = 9
+
+
+def _spread_chart(board: Board) -> str:
+    """Floor -> mean -> ceiling range bars for the strongest buy candidates."""
+    candidates = [rec for recs in board.buys_by_position.values() for rec in recs]
+    if not candidates:
+        return ""
+
+    top = sorted(candidates, key=lambda rec: rec.score.mean, reverse=True)[:CHART_PLAYERS]
+
+    # One shared scale across every bar - the comparison is the entire point, and
+    # per-row scaling would make a narrow spread look like a wide one.
+    scale = max(rec.score.ceiling for rec in top)
+    if scale <= 0:
+        return ""
+
+    heading = _section_heading("Outcome spread")
+    intro = _note(
+        "The same eight players as above, drawn as the range they actually project into. "
+        f'<span style="color:{COLOURS["accent_light"]};font-weight:700;">Light</span> is '
+        f'floor to mean, <span style="color:{COLOURS["accent"]};font-weight:700;">dark</span> '
+        "is mean to ceiling &ndash; so the shade boundary is the expected return, and a wide "
+        "bar is a volatile one. Two players on the same xP can be entirely different bets, "
+        "and for a rank-gain objective the ceiling is usually the half that matters."
+    )
+    rows = "\n".join(_spread_row(rec, scale) for rec in top)
+    return heading + intro + f'<table role="presentation" cellpadding="0" cellspacing="0"'\
+        f' border="0" width="100%" style="border-collapse:collapse;">{rows}</table>'
+
+
+def _spread_row(rec: Recommendation, scale: float) -> str:
+    score = rec.score
+    floor = max(0.0, score.floor)
+    ceiling = max(floor, score.ceiling)
+    mean = min(max(score.mean, floor), ceiling)
+
+    # Widths as percentages of the shared scale. Cells that would round to zero
+    # are dropped entirely: a 0%-width table cell still occupies a pixel or two
+    # in several clients, which would show as a stray tick of colour at the
+    # origin of every bar.
+    lead = floor / scale * 100
+    lower = (mean - floor) / scale * 100
+    upper = (ceiling - mean) / scale * 100
+    rest = max(0.0, 100 - lead - lower - upper)
+
+    def segment(width: float, colour: str) -> str:
+        if width < 0.5:
+            return ""
+        return (
+            f'<td width="{width:.2f}%" height="{BAR_HEIGHT}" '
+            f'style="width:{width:.2f}%;background:{colour};height:{BAR_HEIGHT}px;'
+            f'font-size:0;line-height:0;">&nbsp;</td>'
+        )
+
+    bar = (
+        segment(lead, COLOURS["track"])
+        + segment(lower, COLOURS["accent_light"])
+        + segment(upper, COLOURS["accent"])
+        + segment(rest, COLOURS["track"])
+    )
+
+    return f"""
+    <tr><td style="padding:0 0 14px;">
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+        <tr>
+          <td style="font-size:13px;color:{COLOURS["text"]};padding-bottom:5px;">
+            <strong>{esc(score.name)}</strong>
+            <span style="color:{COLOURS["faint"]};font-size:12px;">
+              {esc(score.team_short)}</span>
+          </td>
+          <td align="right" style="{NUM}font-size:12px;color:{COLOURS["muted"]};
+                     padding-bottom:5px;white-space:nowrap;">
+            {floor:.1f}
+            <span style="color:{COLOURS["faint"]};">&rarr;</span>
+            <strong style="color:{COLOURS["text"]};font-size:13px;">{mean:.1f}</strong>
+            <span style="color:{COLOURS["faint"]};">&rarr;</span>
+            {ceiling:.1f}
+          </td>
+        </tr>
+      </table>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+             style="border-collapse:collapse;table-layout:fixed;background:{COLOURS["track"]};
+                    border-radius:5px;overflow:hidden;">
+        <tr>{bar}</tr>
+      </table>
+    </td></tr>
     """
 
 

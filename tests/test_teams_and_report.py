@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import numpy as np
 
 from fplbot.config import TUNABLES
@@ -19,7 +21,13 @@ from fplbot.models.domain import (
     SourceState,
 )
 from fplbot.report.email import build_message, build_subject
-from fplbot.report.render import esc, render_failure_html, render_html, render_text
+from fplbot.report.render import (
+    COLOURS,
+    esc,
+    render_failure_html,
+    render_html,
+    render_text,
+)
 from tests.test_squad import a_pool as a_squad_pool
 
 
@@ -194,6 +202,63 @@ class TestRendering:
         assert "could not produce a reliable board" in html
         assert "30 hours old" in html
         assert "Source status" in html
+
+
+class TestSpreadChart:
+    """The chart is table cells with percentage widths - no JS, no SVG, no image.
+
+    Gmail strips <svg> and refuses `data:` URIs, and a server-rendered PNG would
+    mean carrying matplotlib for one picture. These tests pin the arithmetic, not
+    the markup.
+    """
+
+    def test_chart_appears_with_the_buy_board(self) -> None:
+        board = Board(build_buy_board([a_score(1), a_score(2)], TUNABLES), [], [], [])
+
+        html = render_html(a_context(), board)
+
+        assert "Outcome spread" in html
+        assert "floor to mean" in html
+
+    def test_chart_is_omitted_when_there_is_nothing_to_plot(self) -> None:
+        """An empty chart frame reads as a rendering failure, so draw nothing."""
+        html = render_html(a_context(), Board({}, [], [], []))
+
+        assert "Outcome spread" not in html
+
+    def test_segment_widths_never_exceed_the_track(self) -> None:
+        """Widths are percentages of one shared scale. Summing past 100% would
+        push the tail segment onto a second row and break every bar."""
+        scores = [a_score(i, price=6.0 + i) for i in range(1, 7)]
+        board = Board(build_buy_board(scores, TUNABLES), [], [], [])
+
+        html = render_html(a_context(), board)
+
+        # Each bar is one <tr> of segments inside a fixed-layout table.
+        for row in re.findall(r'table-layout:fixed.*?<tr>(.*?)</tr>', html, re.S):
+            widths = [float(w) for w in re.findall(r'width="([\d.]+)%"', row)]
+            assert widths
+            assert sum(widths) <= 100.01
+
+    def test_the_scale_is_shared_across_players(self) -> None:
+        """Per-row scaling would make a narrow spread look as wide as a broad one,
+        which inverts the only thing the chart exists to communicate."""
+        wide = a_score(1, distribution=Distribution(samples=np.linspace(0.0, 20.0, 2000)))
+        narrow = a_score(2, distribution=Distribution(samples=np.linspace(4.0, 6.0, 2000)))
+        board = Board(build_buy_board([wide, narrow], TUNABLES), [], [], [])
+
+        html = render_html(a_context(), board)
+        rows = re.findall(r'table-layout:fixed.*?<tr>(.*?)</tr>', html, re.S)
+
+        def coloured_width(row: str) -> float:
+            return sum(
+                float(w)
+                for w, colour in re.findall(r'width="([\d.]+)%"[^>]*background:(#[0-9a-f]+)', row)
+                if colour != COLOURS["track"]
+            )
+
+        assert len(rows) == 2
+        assert coloured_width(rows[0]) > coloured_width(rows[1])
 
 
 class TestCaptainSection:
