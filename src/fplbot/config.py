@@ -333,7 +333,9 @@ def get_settings() -> Settings:
         email_to=recipients,
         season=_env("SEASON", "2026-27"),
         environment=_env("ENVIRONMENT", "dev"),
-        aws_region=_env("AWS_REGION", "eu-west-2"),
+        # Lambda injects AWS_REGION itself, so this fallback only applies to local
+        # runs - but it should still agree with where the stack actually lives.
+        aws_region=_env("AWS_REGION", "eu-west-1"),
         odds_api_key_parameter=os.environ.get("ODDS_API_KEY_PARAMETER") or None,
         # DRY_RUN builds the whole report but does not send it. Invaluable for
         # `sam local invoke` and for the first live run of a season.

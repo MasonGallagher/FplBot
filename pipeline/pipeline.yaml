@@ -274,7 +274,8 @@ Resources:
                     "Season": "${Season}",
                     "DryRun": "true",
                     "SchedulesEnabled": "false",
-                    "LogLevel": "DEBUG"
+                    "LogLevel": "DEBUG",
+                    "CreateSenderIdentity": "true"
                   }
               InputArtifacts:
                 - Name: BuildOutput
@@ -350,7 +351,8 @@ Resources:
                     "Season": "${Season}",
                     "DryRun": "false",
                     "SchedulesEnabled": "true",
-                    "LogLevel": "INFO"
+                    "LogLevel": "INFO",
+                    "CreateSenderIdentity": "false"
                   }
               InputArtifacts:
                 - Name: BuildOutput

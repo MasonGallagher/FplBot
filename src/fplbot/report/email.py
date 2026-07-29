@@ -18,6 +18,33 @@ We send a multipart/alternative message with both text and HTML parts. Beyond
 client compatibility, a message with a real text alternative scores better with
 spam filters than an HTML-only one - which matters for something that arrives on
 a schedule and must not end up in Junk three hours before a deadline.
+
+---------------------------------------------------------------------------
+ON DELIVERABILITY, AND THE LIMIT OF WHAT THIS FILE CAN FIX
+---------------------------------------------------------------------------
+`build_message` sets the headers that legitimate automated mail is expected to
+carry: a display name, `Reply-To`, `Date`, `Message-ID`, `List-Id`,
+`Auto-Submitted`, and one-click `List-Unsubscribe`. Gmail's bulk-sender guidance
+names the unsubscribe pair explicitly, and their absence is a mild negative
+signal on its own.
+
+None of that addresses the actual problem, so it is written down here rather
+than discovered later:
+
+**If EMAIL_FROM is an @gmail.com (or @outlook.com, or any other provider's)
+address, this mail cannot authenticate.** SPF checks the envelope sender, which
+belongs to `amazonses.com`, and gmail.com's SPF record does not authorise SES.
+DKIM would have to be signed by a key published in gmail.com's DNS, which is
+Google's zone and not ours. Both alignment checks therefore fail, and what
+arrives at Gmail is a message claiming to be from one of its own users, sent
+from infrastructure Google has never authorised - which is indistinguishable
+from spoofing, because structurally it *is* spoofing. Junk is the correct
+verdict, and no header or stylesheet changes it.
+
+The fix is a domain you control: verify it as an SES domain identity, enable
+Easy DKIM (three CNAMEs), set a custom MAIL FROM subdomain so SPF aligns too,
+and send as `fplbot@yourdomain`. Until then the practical workaround is a Gmail
+filter on this From address with "Never send it to Spam".
 """
 
 from __future__ import annotations
@@ -25,6 +52,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from email.utils import formataddr, formatdate, make_msgid
 from typing import Any
 
 import boto3
@@ -32,6 +60,9 @@ from botocore.exceptions import ClientError
 
 from fplbot.config import get_settings
 from fplbot.observability import Metric, count, logger
+
+# The display name shown in the inbox list instead of a bare address.
+SENDER_NAME = "fplBot"
 
 
 @dataclass
@@ -49,11 +80,35 @@ def build_message(
     Part order matters and is not arbitrary: in multipart/alternative the *last*
     part is the one a capable client prefers, so text must come first and HTML
     second. Getting this backwards makes every client show the plain-text version.
+
+    The headers beyond From/To/Subject are deliverability hygiene - see the module
+    docstring for what they do and, more importantly, what they cannot do.
     """
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
-    message["From"] = sender
+    # A display name is what turns "masongallagher90@gmail.com" in the inbox list
+    # into "fplBot". formataddr quotes and encodes it correctly.
+    message["From"] = formataddr((SENDER_NAME, sender))
     message["To"] = ", ".join(recipients)
+    message["Reply-To"] = sender
+
+    # RFC 5322 requires Date, and Message-ID is what clients thread on. SES will
+    # supply both if absent, but a message that arrives already well-formed is
+    # not relying on that.
+    message["Date"] = formatdate(localtime=False)
+    domain = sender.rpartition("@")[2] or None
+    message["Message-ID"] = make_msgid(domain=domain)
+
+    # Marks this as machine-generated so well-behaved auto-responders stay quiet
+    # rather than bouncing an out-of-office back at a Lambda.
+    message["Auto-Submitted"] = "auto-generated"
+    message["List-Id"] = f"fplBot transfer board <fplbot.{domain}>"
+
+    # Gmail's bulk-sender rules call for one-click unsubscribe. A mailto: target
+    # is a valid List-Unsubscribe and needs no endpoint to host - the recipient
+    # here is the operator, who can simply stop the schedule.
+    message["List-Unsubscribe"] = f"<mailto:{sender}?subject=unsubscribe>"
+    message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
 
     message.attach(MIMEText(text_body, "plain", "utf-8"))
     message.attach(MIMEText(html_body, "html", "utf-8"))

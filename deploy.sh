@@ -32,6 +32,17 @@ set -euo pipefail
 # is opt-out and this sidesteps the crash entirely.
 export SAM_CLI_TELEMETRY="${SAM_CLI_TELEMETRY:-0}"
 
+# Under Git Bash / MSYS, any argument that looks like a POSIX path (e.g. an SSM
+# parameter name such as /fplbot/dev/odds-api-key passed to --parameter-overrides)
+# gets silently rewritten to a Windows path by prepending the Git install root
+# before the child process ever sees it. That mangled value then breaks whatever
+# consumes it. A blanket MSYS_NO_PATHCONV=1 "fixes" that but also disables the
+# translation that genuine file-path arguments need to reach native (non-MSYS)
+# tools like aws.exe - e.g. it turns the mktemp response file in invoke_once()
+# into a path aws.exe can't find. Excluding just this one value keeps the rest
+# of MSYS's path conversion intact.
+export MSYS2_ARG_CONV_EXCL="${MSYS2_ARG_CONV_EXCL:-OddsApiKeyParameter=}"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 

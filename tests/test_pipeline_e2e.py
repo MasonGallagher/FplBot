@@ -403,7 +403,7 @@ class TestNewSectionsEndToEnd:
         html = wired["email"].sent[0]["html"]
 
         assert "Best wildcard squad" in html
-        assert "in the bank" in html
+        assert "In the bank" in html
 
     @respx.mock
     def test_the_squad_respects_the_budget_end_to_end(self, wired) -> None:
@@ -413,10 +413,12 @@ class TestNewSectionsEndToEnd:
         pipeline.run(now_epoch=DEADLINE_EPOCH - 47 * HOUR)
         html = wired["email"].sent[0]["html"]
 
-        # The rendered spend line must not exceed the budget.
-        match = re.search(r"GBP ([\d.]+)m spent", html)
-        assert match is not None
-        assert float(match.group(1)) <= 100.0
+        # Every money figure the squad section renders - spend and bank alike -
+        # has to sit inside the budget. Asserting on all of them rather than on
+        # one phrase keeps this tied to the constraint instead of the wording.
+        amounts = [float(value) for value in re.findall(r"&pound;([\d.]+)m", html)]
+        assert amounts
+        assert max(amounts) <= 100.0
 
     @respx.mock
     def test_the_text_part_carries_both_sections(self, wired) -> None:

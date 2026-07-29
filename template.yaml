@@ -73,11 +73,26 @@ Parameters:
     AllowedValues: ["true", "false"]
     Description: Build the report but do not send it. Ideal for a first live run.
 
+  CreateSenderIdentity:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      Whether this stack owns the SES identity for EmailFrom. An SES identity is
+      an account+region-level resource, so exactly ONE stack may declare it. With
+      dev and prod both sending from the same address, dev creates it and prod
+      must set this to false - otherwise prod's changeset fails early validation
+      with AWS::EarlyValidation::ResourceExistenceCheck, because the identity it
+      is trying to add already exists. Set it to true only if this environment is
+      the sole owner of the address, or if each environment sends from a
+      different one.
+
 Conditions:
   IsProd: !Equals [!Ref Environment, prod]
   HasOddsApiKey: !Not [!Equals [!Ref OddsApiKeyParameter, ""]]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
   SchedulesOn: !Equals [!Ref SchedulesEnabled, "true"]
+  OwnsSenderIdentity: !Equals [!Ref CreateSenderIdentity, "true"]
 
 # ---------------------------------------------------------------------------
 # Globals
@@ -397,6 +412,7 @@ Resources:
   # -------------------------------------------------------------------------
   SenderIdentity:
     Type: AWS::SES::EmailIdentity
+    Condition: OwnsSenderIdentity
     Properties:
       EmailIdentity: !Ref EmailFrom
 

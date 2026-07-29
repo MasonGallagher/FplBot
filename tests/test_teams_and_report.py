@@ -242,7 +242,7 @@ class TestWildcardSection:
         assert "Best wildcard squad" in html
         assert squad is not None
         assert squad.formation in html
-        assert "in the bank" in html
+        assert "In the bank" in html
         assert "Bench (in autosub order)" in html
 
     def test_explains_why_the_bench_is_cheap(self) -> None:
@@ -297,9 +297,29 @@ class TestEmailAssembly:
     def test_headers_are_set(self) -> None:
         message = build_message("S", "<p>h</p>", "t", "from@x.com", ["one@x.com", "two@x.com"])
 
-        assert message["From"] == "from@x.com"
+        # From carries a display name, so the address is a substring rather than
+        # the whole header: "fplBot <from@x.com>".
+        assert "from@x.com" in message["From"]
+        assert "fplBot" in message["From"]
         assert "one@x.com" in message["To"]
         assert "two@x.com" in message["To"]
+
+    def test_deliverability_headers_are_present(self) -> None:
+        """Gmail's bulk-sender guidance names the unsubscribe pair explicitly, and
+        Date/Message-ID are what a well-formed message is expected to arrive with.
+
+        None of this rescues an unauthenticated @gmail.com sender - see the
+        module docstring - but their absence is a needless negative signal.
+        """
+        message = build_message("S", "<p>h</p>", "t", "bot@example.com", ["you@example.com"])
+
+        assert message["Reply-To"] == "bot@example.com"
+        assert message["Date"]
+        assert message["Message-ID"].endswith("@example.com>")
+        assert message["Auto-Submitted"] == "auto-generated"
+        assert message["List-Unsubscribe"] == "<mailto:bot@example.com?subject=unsubscribe>"
+        assert message["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+        assert "example.com" in message["List-Id"]
 
     def test_subject_leads_with_the_phase(self) -> None:
         """Often all that gets read on a phone, and FINAL vs provisional is the
