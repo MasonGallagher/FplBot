@@ -164,7 +164,22 @@ def fetch_league_data(
         _warm_up(context)
 
         url = f"{Endpoints.UNDERSTAT}/getLeagueData/EPL/{season_start_year}"
-        result = context.fetch_and_archive(SOURCE, url, headers=REQUIRED_HEADERS)
+        # Understat serves this endpoint as `text/javascript;charset=utf-8`. The
+        # body is ordinary JSON - only the header is unusual - but the default
+        # `application/json` assertion rejected it before the parser ever saw it,
+        # so every single fetch failed and the source was permanently degraded.
+        #
+        # The assertion itself is worth keeping: it is the second half of the
+        # redirects-disabled defence, and it exists to catch a maintenance or
+        # Cloudflare challenge page served as HTML with a 200. Widening it to the
+        # two types Understat actually uses keeps that protection - an HTML
+        # challenge page still fails - while accepting the real data.
+        result = context.fetch_and_archive(
+            SOURCE,
+            url,
+            headers=REQUIRED_HEADERS,
+            expect_content_type=("application/json", "text/javascript"),
+        )
         payload = result.json()
 
         players_raw = payload.get("players") or []
