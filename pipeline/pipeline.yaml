@@ -539,7 +539,13 @@ Resources:
               # Scoped to the dev function specifically. The smoke test has no
               # business being able to invoke production.
               - Effect: Allow
-                Action: lambda:InvokeFunction
+                Action:
+                  - lambda:InvokeFunction
+                  # The function-updated-v2 waiter polls
+                  # GetFunctionConfiguration. Without it the wait fails
+                  # closed with AccessDenied and the race it exists to
+                  # prevent comes straight back. Read-only, dev only.
+                  - lambda:GetFunctionConfiguration
                 Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:fplbot-poll-dev"
 
   PipelineRole:
