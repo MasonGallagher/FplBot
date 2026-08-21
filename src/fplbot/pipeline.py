@@ -843,11 +843,19 @@ def _build_scoring_context(
         finished = sum(1 for e in bootstrap.events if e.finished and e.id < run_context.gameweek)
         games_played = {team.id: finished for team in bootstrap.teams}
 
+    # NON-penalty xG, matching the current-season block above. Penalties are
+    # modelled separately from `penalties_order`, so using raw xG here would
+    # double-count designated takers - and would do it only in the prior, which
+    # is the sort of asymmetry that is very hard to spot later.
+    #
+    # The per-90 properties already return None below any minutes, so there is no
+    # separate minutes guard.
     prior_xg: dict[int, float] = {}
     prior_xa: dict[int, float] = {}
     for element_id, player in (last_season_players or {}).items():
-        if player.minutes and player.minutes > 0:
-            prior_xg[element_id] = player.xg_per_90
+        if player.npxg_per_90 is not None:
+            prior_xg[element_id] = player.npxg_per_90
+        if player.xa_per_90 is not None:
             prior_xa[element_id] = player.xa_per_90
 
     return scoring.ScoringContext(
