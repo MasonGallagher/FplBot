@@ -20,16 +20,45 @@ phases:
 
   build:
     commands:
-      - echo "Invoking ${FUNCTION_NAME} in dry-run mode"
+      # CloudFormation reports the change set complete before Lambda has
+      # finished applying the new code, so an invoke fired immediately after
+      # can hit ResourceConflictException - "The operation cannot be performed
+      # at this time. An update is in progress". Nothing is wrong; the deploy
+      # simply has not settled.
+      #
+      # Not hypothetical: this failed the GW1 2026-27 deploy at 16:36 with a
+      # live deadline 54 minutes away, and retrying the stage worked first
+      # time. The wait is the fix; the retry below covers the remainder.
+      - echo "Waiting for ${FUNCTION_NAME} to finish updating"
+      - aws lambda wait function-updated-v2 --function-name "$FUNCTION_NAME"
       - |
-        aws lambda invoke \
-          --function-name "$FUNCTION_NAME" \
-          --cli-binary-format raw-in-base64-out \
-          --payload '{}' \
-          --log-type Tail \
-          --query 'LogResult' \
-          --output text \
-          response.json > log.b64 || { echo "Invocation call failed"; exit 1; }
+        # The previous version ended in `|| { echo "Invocation call failed";
+        # exit 1; }`, which discarded the AWS error and left only a
+        # FileNotFoundError on response.json in the next phase. Diagnosing GW1
+        # took far longer than it should have, so stderr is now printed.
+        attempt=1
+        max_attempts=3
+        while true; do
+          echo "Invoking ${FUNCTION_NAME} in dry-run mode (attempt ${attempt}/${max_attempts})"
+          if aws lambda invoke \
+              --function-name "$FUNCTION_NAME" \
+              --cli-binary-format raw-in-base64-out \
+              --payload '{}' \
+              --log-type Tail \
+              --query 'LogResult' \
+              --output text \
+              response.json > log.b64 2> invoke.err; then
+            break
+          fi
+          echo "--- invoke failed on attempt ${attempt} ---"
+          cat invoke.err || true
+          if [ "${attempt}" -ge "${max_attempts}" ]; then
+            echo "FAIL: could not invoke ${FUNCTION_NAME} after ${max_attempts} attempts"
+            exit 1
+          fi
+          attempt=$((attempt + 1))
+          sleep 15
+        done
       - echo "--- Function logs ---"
       - base64 -d log.b64 || true
       - echo "--- Response ---"
