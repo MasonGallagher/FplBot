@@ -22,6 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
 
+from fplbot.config import HARD_STALENESS_CEILING_SECONDS
 from fplbot.http import BreakerOpen, FetchResult, HttpClient, HttpFetchError
 from fplbot.models.domain import DataQuality, SourceState
 from fplbot.observability import Metric, count, logger
@@ -163,6 +164,38 @@ def _degrade(
     """Try last-known-good; otherwise mark the source failed."""
     if deserialise is not None:
         payload, age = context.store.get_last_known_good(name)
+        if (
+            payload is not None
+            and age is not None
+            and not required
+            and age > HARD_STALENESS_CEILING_SECONDS
+        ):
+            # Cached data past the ceiling is worse than none. Twenty-two-day-old
+            # scoreline probabilities describe a season that had not started;
+            # using them would be advising from fiction, and *relying* on them
+            # used to drag the whole run over the staleness gate and withhold a
+            # board built from six other healthy sources.
+            #
+            # For an optional source the honest move is to drop it and let the
+            # model take its documented fallback - FPL's own fixture difficulty,
+            # in ClubElo's case. Required sources are exempt: there is no
+            # fallback for FPL, so stale-but-present still beats nothing and the
+            # gate below is what should stop the run.
+            hours = age / 3600
+            logger.warning(
+                "Discarding last-known-good past the staleness ceiling",
+                extra={"source": name, "age_hours": round(hours, 1)},
+            )
+            context.quality.record(
+                name, SourceState.FAILED, f"{reason}; cached copy {hours:.1f}h old, discarded"
+            )
+            context.quality.add_caveat(
+                f"{name}: unavailable, and the cached copy was {hours:.1f} hours old - past the "
+                f"{HARD_STALENESS_CEILING_SECONDS / 3600:.0f}-hour ceiling, so it was discarded "
+                f"rather than used. This feature is disabled for this run."
+            )
+            return SourceResult(name, None, SourceState.FAILED, reason)
+
         if payload is not None and age is not None:
             hours = age / 3600
             logger.info(

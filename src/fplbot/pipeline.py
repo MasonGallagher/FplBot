@@ -243,12 +243,17 @@ def _produce_and_send(
     odds_result = oddsapi.fetch_odds(context, _odds_api_key(settings))
 
     # -- 7. Staleness gate ------------------------------------------------
+    # Only weighs data we are actually advising FROM. A source dropped for being
+    # too old no longer reports an age, so it cannot drag the run over the gate -
+    # which is what withheld a GW1 board built from six healthy sources because
+    # ClubElo had been timing out, unnoticed, for three weeks.
     worst_age = run_context.data_quality.worst_age_seconds
     if worst_age > HARD_STALENESS_CEILING_SECONDS:
         return _send_failure(
             run_context,
             f"the freshest available data is {worst_age / 3600:.1f} hours old, past the "
             f"{HARD_STALENESS_CEILING_SECONDS / 3600:.0f}-hour ceiling",
+            context,
         )
 
     # -- 8. Identity resolution -------------------------------------------
@@ -941,13 +946,37 @@ def _ranks(values: np.ndarray) -> np.ndarray:
     return ranks
 
 
-def _send_failure(run_context: RunContext, reason: str) -> RunOutcome:
-    """Email about the failure rather than about transfers."""
+def _send_failure(
+    run_context: RunContext, reason: str, context: SourceContext | None = None
+) -> RunOutcome:
+    """Email about the failure rather than about transfers.
+
+    The lock is RELEASED afterwards, and that is the important part. The lock
+    means "this tier has had its board"; a failure notice is not a board.
+    Holding it turned a transient upstream outage into a permanently missed
+    gameweek - the source recovers twenty minutes later, the next hourly run
+    finds the tier already claimed, exits `suppressed`, and the deadline passes
+    in silence.
+
+    Releasing it lets any later run inside the same tier deliver the real thing.
+    The cost is that a persistent outage repeats this notice hourly, which is
+    noisy but honest, and far cheaper than a silent gameweek.
+    """
     logger.error("Refusing to send recommendations", extra={"reason": reason})
     count(Metric.RUN_ABANDONED_STALE)
 
     html_body = render.render_failure_html(run_context, reason)
     subject = f"fplBot GW{run_context.gameweek}: could not produce a reliable board"
     email_module.send_report(subject, html_body, f"{subject}\n\n{reason}")
+
+    if context is not None:
+        try:
+            context.store.release_notification_lock(run_context.gameweek, run_context.tier)
+            logger.info(
+                "Released the tier lock after a failure notice",
+                extra={"gameweek": run_context.gameweek, "tier": run_context.tier},
+            )
+        except Exception as exc:
+            logger.warning("Could not release the lock", extra={"error": str(exc)[:200]})
 
     return RunOutcome("failed", gameweek=run_context.gameweek, tier=run_context.tier, detail=reason)
