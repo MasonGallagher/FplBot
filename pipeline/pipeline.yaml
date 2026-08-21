@@ -541,10 +541,13 @@ Resources:
               - Effect: Allow
                 Action:
                   - lambda:InvokeFunction
-                  # The function-updated-v2 waiter polls
-                  # GetFunctionConfiguration. Without it the wait fails
-                  # closed with AccessDenied and the race it exists to
-                  # prevent comes straight back. Read-only, dev only.
+                  # The function-updated-v2 waiter polls GetFunction - NOT
+                  # GetFunctionConfiguration, which is what the v1 waiter uses.
+                  # Granting only the latter fails closed with AccessDenied and
+                  # the race the wait exists to prevent comes straight back,
+                  # which is exactly what happened. Both are listed because both
+                  # are read-only and the distinction is easy to get wrong twice.
+                  - lambda:GetFunction
                   - lambda:GetFunctionConfiguration
                 Resource: !Sub "arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:fplbot-poll-dev"
 
