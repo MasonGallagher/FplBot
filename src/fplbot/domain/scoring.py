@@ -103,6 +103,10 @@ class ScoringContext:
     # estimate rather than failing when a source is unavailable.
     xg90_by_element: dict[int, float] = field(default_factory=dict)
     xa90_by_element: dict[int, float] = field(default_factory=dict)
+    # LAST season's rates, keyed by FPL element id. These are the prior this
+    # season's sample updates - not a competitor to it. See `attacking_rates`.
+    prior_xg90_by_element: dict[int, float] = field(default_factory=dict)
+    prior_xa90_by_element: dict[int, float] = field(default_factory=dict)
     defcon90_by_element: dict[int, float] = field(default_factory=dict)
     goalscorer_probability: dict[int, float] = field(default_factory=dict)
     team_games_played: dict[int, int] = field(default_factory=dict)
@@ -169,8 +173,38 @@ def attacking_rates(
     double-count designated takers), then FPL's own Opta-sourced per-90s, then
     the positional prior alone.
     """
-    prior_xg = context.tunables.prior_xg90.get(position, 0.1)
-    prior_xa = context.tunables.prior_xa90.get(position, 0.1)
+    positional_xg = context.tunables.prior_xg90.get(position, 0.1)
+    positional_xa = context.tunables.prior_xa90.get(position, 0.1)
+
+    # Two-stage empirical Bayes. The positional average is the outermost prior;
+    # last season's rate updates it; this season's sample updates that.
+    #
+    # The middle stage exists because of what happens at a season rollover. FPL
+    # ZEROES `expected_goals_per_90` and `minutes` when the new season opens, so
+    # from the first deadline until several gameweeks in, the in-season path had
+    # no player-specific information at all - Haaland went from 0.78 xG/90 to
+    # 0.00, shrinkage returned the bare positional prior, and every forward in
+    # the league became identical. With expected points flat, ownership was the
+    # only thing left to sort on, which is how a board turned almost entirely
+    # differential and every pick came back LOW confidence. The confidence label
+    # was right; there genuinely was nothing behind the numbers.
+    #
+    # Last season's rate is weaker evidence than this season's, but it is not
+    # nothing, and it is enormously better than pretending Haaland is an average
+    # forward. Weight is capped so it can never outweigh real current-season
+    # evidence once that accumulates.
+    prior_xg, prior_xa = positional_xg, positional_xa
+    last_xg = context.prior_xg90_by_element.get(element.id)
+    last_xa = context.prior_xa90_by_element.get(element.id)
+    cap = int(context.tunables.preseason_equivalent_minutes)
+    if last_xg is not None:
+        prior_xg = shrink_per_90(
+            last_xg, cap, positional_xg, context.tunables.shrinkage_prior_minutes
+        )
+    if last_xa is not None:
+        prior_xa = shrink_per_90(
+            last_xa, cap, positional_xa, context.tunables.shrinkage_prior_minutes
+        )
 
     if not context.season_has_started:
         # Pre-season. The counters (`total_points`, `event_points`, transfers)
@@ -191,6 +225,10 @@ def attacking_rates(
         # midfielder currently shows 3.60 xG/90 off a handful of minutes, and an
         # uncapped rate would promote him to the top of the board.
         capped_minutes = int(min(element.minutes, context.tunables.preseason_equivalent_minutes))
+        if not element.xg_per_90 and not element.xa_per_90:
+            # FPL has already zeroed the carried-over rates. The informed prior
+            # above is now the best estimate available.
+            return prior_xg, prior_xa
         return (
             shrink_per_90(
                 element.xg_per_90 or 0.0,

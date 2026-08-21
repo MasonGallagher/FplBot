@@ -242,6 +242,18 @@ def _produce_and_send(
     season_start_year = int(settings.season.split("-")[0])
     understat_result = understat.fetch_league_data(context, season_start_year)
 
+    # FPL zeroes every per-90 rate and minutes counter at a season rollover, and
+    # Understat's new-season league data starts empty too, so for the opening
+    # gameweeks there is NOTHING player-specific in either. Last season's
+    # Understat data is the only evidence that survives the turn of the year, and
+    # without it every forward scores identically and the board sorts itself on
+    # ownership alone. Fetched only while this season is still thin, so it costs
+    # one extra request early on and nothing at all thereafter.
+    last_season_result = None
+    current_players = (understat_result.data.players if understat_result.data else []) or []
+    if len(current_players) < MIN_UNDERSTAT_PLAYERS_FOR_SELF_SUFFICIENCY:
+        last_season_result = understat.fetch_league_data(context, season_start_year - 1)
+
     odds_result = oddsapi.fetch_odds(context, _odds_api_key(settings))
 
     # Second choice for anything ClubElo did not cover. Runs after the odds fetch
@@ -273,6 +285,11 @@ def _produce_and_send(
 
     injury_by_element = _resolve_injuries(resolver, injuries.data, bootstrap, context)
     understat_by_element = _resolve_understat(resolver, understat_result.data, bootstrap, context)
+    last_season_by_element = (
+        _resolve_understat(resolver, last_season_result.data, bootstrap, context)
+        if last_season_result is not None
+        else {}
+    )
 
     run_context.data_quality.unresolved_players = resolver.unresolved[:50]
 
@@ -283,7 +300,12 @@ def _produce_and_send(
 
     # -- 10. Score ---------------------------------------------------------
     scoring_context = _build_scoring_context(
-        bootstrap, run_context, understat_by_element, odds_result.data, element_types
+        bootstrap,
+        run_context,
+        understat_by_element,
+        odds_result.data,
+        element_types,
+        last_season_by_element,
     )
     scores, minutes_by_element = _score_all(
         bootstrap, team_gameweeks, signals, scoring_context, lineups.data
@@ -762,12 +784,20 @@ def _build_availability_signals(
     return signals
 
 
+# Below this many players in the current season's Understat data, the season is
+# too young to stand on its own and last season is fetched as the prior. Around
+# a third of a squad-sized league: enough that rates have begun to mean
+# something, and reached within a handful of gameweeks.
+MIN_UNDERSTAT_PLAYERS_FOR_SELF_SUFFICIENCY = 200
+
+
 def _build_scoring_context(
     bootstrap: Bootstrap,
     run_context: RunContext,
     understat_players: dict[int, understat.UnderstatPlayer],
     odds: oddsapi.OddsData | None,
     element_types: dict[int, str],
+    last_season_players: dict[int, understat.UnderstatPlayer] | None = None,
 ) -> scoring.ScoringContext:
     """Assemble the scorer's inputs.
 
@@ -813,6 +843,13 @@ def _build_scoring_context(
         finished = sum(1 for e in bootstrap.events if e.finished and e.id < run_context.gameweek)
         games_played = {team.id: finished for team in bootstrap.teams}
 
+    prior_xg: dict[int, float] = {}
+    prior_xa: dict[int, float] = {}
+    for element_id, player in (last_season_players or {}).items():
+        if player.minutes and player.minutes > 0:
+            prior_xg[element_id] = player.xg_per_90
+            prior_xa[element_id] = player.xa_per_90
+
     return scoring.ScoringContext(
         element_types=element_types,
         scoring_rules=bootstrap.game_config.scoring,
@@ -821,6 +858,8 @@ def _build_scoring_context(
         rng=rng,
         xg90_by_element=xg90,
         xa90_by_element=xa90,
+        prior_xg90_by_element=prior_xg,
+        prior_xa90_by_element=prior_xa,
         goalscorer_probability=goalscorer,
         team_games_played=games_played,
         top_bps_elements=top_bps,
