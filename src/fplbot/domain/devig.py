@@ -321,3 +321,115 @@ def clean_sheet_probability_from_goals(expected_conceded: float) -> float:
     within a match are not quite independent.
     """
     return poisson_pmf(0, expected_conceded)
+
+
+# ---------------------------------------------------------------------------
+# Goal rates implied by the market
+# ---------------------------------------------------------------------------
+# ClubElo publishes a full scoreline distribution, so when it is up we sum its
+# `R:x-0` columns and no modelling is needed. When it is down the alternative
+# used to be FPL's 1-5 difficulty scale, which is far cruder than it looks: it
+# rates a fixture, not a team. In GW1 2026-27 it gave newly-promoted Ipswich at
+# home the same difficulty 2 as Arsenal at home, so both sides were modelled as
+# conceding 1.01 goals and every defender in the league collapsed to within
+# 0.24 xP of every other.
+#
+# The bookmakers already tell us the answer, in data we fetch anyway for the
+# 1X2 and totals markets. Two numbers pin down a two-parameter goal model:
+#
+#   * over/under 2.5 fixes the TOTAL     lambda_home + lambda_away
+#   * the 1X2 split fixes the SUPREMACY  lambda_home - lambda_away
+#
+# Solve both and each side's clean sheet is P(opponent scores 0). This is a
+# market consensus rather than a single model's opinion, and it is devigged
+# first, so it is a genuinely good second choice - better than a difficulty
+# rating and, unlike ClubElo, it cannot silently go stale without us noticing,
+# because the same fetch carries the quota headers.
+MAX_GOAL_RATE = 6.0
+
+
+def _total_goals_from_over_under(p_over_2_5: float) -> float | None:
+    """Solve for the total goal rate that reproduces P(over 2.5).
+
+    Bisection rather than a solver dependency: the function is monotonic in
+    lambda, so twenty iterations pin it to well under a thousandth of a goal.
+    """
+    if not 0.0 < p_over_2_5 < 1.0:
+        return None
+
+    def p_over(lam: float) -> float:
+        # Over 2.5 means three or more goals.
+        return 1.0 - poisson_cdf(2, lam)
+
+    low, high = 0.05, MAX_GOAL_RATE * 2
+    if p_over(low) > p_over_2_5 or p_over(high) < p_over_2_5:
+        return None
+    for _ in range(40):
+        mid = (low + high) / 2
+        if p_over(mid) < p_over_2_5:
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2
+
+
+def _supremacy_from_1x2(p_home: float, p_away: float, total: float) -> float:
+    """Solve for the goal-rate difference that reproduces the home/away split.
+
+    Independent Poisson per side. That understates draws a little - goals in a
+    match are not quite independent - but the quantity we want out of this is
+    each side's rate, and the bias in the draw sits mostly between the two.
+    """
+
+    def home_minus_away(supremacy: float) -> float:
+        lam_h = max(0.01, (total + supremacy) / 2)
+        lam_a = max(0.01, (total - supremacy) / 2)
+        home = away = 0.0
+        for h in range(9):
+            ph = poisson_pmf(h, lam_h)
+            for a in range(9):
+                pa = poisson_pmf(a, lam_a)
+                if h > a:
+                    home += ph * pa
+                elif a > h:
+                    away += ph * pa
+        return home - away
+
+    target = p_home - p_away
+    low, high = -total, total
+    for _ in range(40):
+        mid = (low + high) / 2
+        if home_minus_away(mid) < target:
+            low = mid
+        else:
+            high = mid
+    return (low + high) / 2
+
+
+def goal_rates_from_odds(
+    home_win: float | None,
+    draw: float | None,
+    away_win: float | None,
+    over_2_5: float | None,
+    under_2_5: float | None,
+) -> tuple[float, float] | None:
+    """(lambda_home, lambda_away) implied by devigged 1X2 and over/under 2.5.
+
+    Returns None when either market is missing, which is the common case for a
+    fixture no bookmaker has priced yet. The caller falls back further.
+    """
+    if None in (home_win, draw, away_win, over_2_5, under_2_5):
+        return None
+
+    p_home, _p_draw, p_away = devig_1x2(home_win, draw, away_win)
+    totals = implied_probabilities([over_2_5, under_2_5], method=DevigMethod.MULTIPLICATIVE)
+    p_over = totals.probabilities[0]
+
+    total = _total_goals_from_over_under(p_over)
+    if total is None:
+        return None
+
+    supremacy = _supremacy_from_1x2(p_home, p_away, total)
+    lam_home = min(MAX_GOAL_RATE, max(0.05, (total + supremacy) / 2))
+    lam_away = min(MAX_GOAL_RATE, max(0.05, (total - supremacy) / 2))
+    return lam_home, lam_away
