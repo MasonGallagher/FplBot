@@ -41,6 +41,7 @@ def a_score(
     fixture_kind: FixtureKind = FixtureKind.NORMAL,
     availability: AvailabilitySignal | None = None,
     components: dict | None = None,
+    minutes_played: int = 2000,
 ) -> PlayerScore:
     rng = np.random.default_rng(element_id)
     samples = np.clip(rng.normal(mean, spread, 3000), 0, None)
@@ -53,6 +54,7 @@ def a_score(
         team_short="ARS",
         team_id=1,
         position=position,
+        minutes_played=minutes_played,
         price=price,
         ownership=ownership,
         distribution=Distribution(samples=samples),
@@ -335,3 +337,61 @@ class TestWatchlist:
         watchlist = build_watchlist([mild, severe])
 
         assert watchlist[0].element_id == 2
+
+
+class TestDataSufficiency:
+    """A player with no Premier League history is a guess wearing a name.
+
+    Written after GW1 2026-27, where three forwards with ZERO PL minutes ranked
+    3rd, 4th and 5th - above a proven 0.50 xG/90 forward on 2658 minutes - purely
+    because almost nobody owned them. Their rates were the positional prior, so
+    their distributions were narrow and confident-looking, and the ownership
+    discount then rewarded them for being unknown.
+    """
+
+    def test_no_history_is_low_confidence(self) -> None:
+        assert assess_confidence(a_score(minutes_played=0)) is Confidence.LOW
+
+    def test_thin_history_is_medium_at_best(self) -> None:
+        assert assess_confidence(a_score(minutes_played=600)) is not Confidence.HIGH
+
+    def test_an_established_player_is_unaffected(self) -> None:
+        """The check must not quietly downgrade everybody."""
+        score = a_score(
+            minutes_played=2500,
+            availability=AvailabilitySignal(
+                element_id=1, risk=0.0, corroborating_sources=["ffs", "premierinjuries"]
+            ),
+        )
+
+        assert assess_confidence(score) is Confidence.HIGH
+
+
+class TestDifferentialStake:
+    """The ownership discount is a bet that our xP is right and the crowd's is
+    wrong. It should be sized by how much we actually know."""
+
+    def test_an_unknown_player_loses_his_differential_edge(self) -> None:
+        """The correction that is easy to get backwards. Shrinking the PENALTY
+        would raise an unowned player's score, since his penalty was tiny. What
+        shrinks is his entitlement: effective ownership moves to the baseline."""
+        score = a_score(mean=4.0, ownership=1.0, minutes_played=0)
+
+        earned = rank_score(score, TUNABLES, Confidence.HIGH)
+        unearned = rank_score(score, TUNABLES, Confidence.LOW)
+
+        assert unearned < earned, "an unknown must not out-score a proven equal"
+
+    def test_a_proven_player_is_scored_at_full_stake(self) -> None:
+        score = a_score(mean=4.0, ownership=60.0, minutes_played=2500)
+
+        assert rank_score(score, TUNABLES, Confidence.HIGH) == rank_score(score, TUNABLES)
+
+    def test_two_equally_owned_players_are_split_on_evidence(self) -> None:
+        """Same xP, same ownership: the one we actually know about must win."""
+        proven = a_score(element_id=1, mean=3.6, ownership=5.0, minutes_played=2600)
+        unknown = a_score(element_id=2, mean=3.6, ownership=5.0, minutes_played=0)
+
+        assert rank_score(proven, TUNABLES, assess_confidence(proven)) > rank_score(
+            unknown, TUNABLES, assess_confidence(unknown)
+        )

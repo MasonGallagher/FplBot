@@ -38,6 +38,7 @@ from fplbot.domain import availability as availability_domain
 from fplbot.domain import (
     calibration,
     captaincy,
+    devig,
     horizon,
     invariants,
     ranking,
@@ -53,6 +54,7 @@ from fplbot.http import HttpClient
 from fplbot.models.domain import (
     AvailabilitySignal,
     DataQuality,
+    FixtureContext,
     PlayerScore,
     RunContext,
     TeamGameweek,
@@ -241,6 +243,11 @@ def _produce_and_send(
     understat_result = understat.fetch_league_data(context, season_start_year)
 
     odds_result = oddsapi.fetch_odds(context, _odds_api_key(settings))
+
+    # Second choice for anything ClubElo did not cover. Runs after the odds fetch
+    # because that is where the data comes from; it only fills gaps, so a healthy
+    # ClubElo makes it a no-op.
+    _apply_odds_clean_sheets(team_gameweeks, odds_result.data, bootstrap, run_context)
 
     # -- 7. Staleness gate ------------------------------------------------
     # Only weighs data we are actually advising FROM. A source dropped for being
@@ -452,6 +459,93 @@ def _apply_clubelo(
         )
 
     logger.info("Applied ClubElo probabilities", extra={"fixtures_matched": matched})
+
+
+def _apply_odds_clean_sheets(
+    team_gameweeks: dict[int, TeamGameweek],
+    odds: oddsapi.OddsData | None,
+    bootstrap: Bootstrap,
+    run_context: RunContext,
+) -> None:
+    """Fill missing clean-sheet probabilities from the betting market.
+
+    Only touches fixtures ClubElo left empty, so this is a no-op whenever ClubElo
+    is healthy - a real scoreline model beats anything derived, and ClubElo's is
+    already vig-free.
+
+    It matters because the alternative was FPL's 1-5 difficulty scale, which
+    rates a FIXTURE rather than a team. In GW1 2026-27 it gave newly-promoted
+    Ipswich at home the same difficulty 2 as Arsenal at home, both sides were
+    modelled as conceding 1.01 goals, and the entire defender board collapsed
+    into a 0.24 xP band - at which point the ranking was decided by nothing but
+    who was least owned.
+
+    Costs no extra API credits: the 1X2 and totals markets are already fetched
+    for match probabilities, and two numbers are enough to pin a two-parameter
+    goal model.
+    """
+    if odds is None or not odds.matches:
+        return
+
+    teams_by_name = {t.name: t.id for t in bootstrap.teams}
+    rates: dict[tuple[int, int], tuple[float, float]] = {}
+    for match in odds.matches:
+        home_id = teams.resolve_team_id(match.home_team, teams_by_name)
+        away_id = teams.resolve_team_id(match.away_team, teams_by_name)
+        if not (home_id and away_id):
+            continue
+        derived = devig.goal_rates_from_odds(
+            match.home_win, match.draw, match.away_win, match.over_2_5, match.under_2_5
+        )
+        if derived:
+            rates[(home_id, away_id)] = derived
+
+    if not rates:
+        return
+
+    filled = 0
+    for team_id, team_gameweek in team_gameweeks.items():
+        enriched: list[FixtureContext] = []
+        for fixture in team_gameweek.fixtures:
+            pair = (
+                (team_id, fixture.opponent_id)
+                if fixture.is_home
+                else (fixture.opponent_id, team_id)
+            )
+            derived = rates.get(pair)
+            if derived is None or fixture.clean_sheet_probability is not None:
+                enriched.append(fixture)
+                continue
+
+            lam_home, lam_away = derived
+            conceded = lam_away if fixture.is_home else lam_home
+            scored = lam_home if fixture.is_home else lam_away
+            filled += 1
+            enriched.append(
+                type(fixture)(
+                    fixture_id=fixture.fixture_id,
+                    team_id=fixture.team_id,
+                    opponent_id=fixture.opponent_id,
+                    is_home=fixture.is_home,
+                    difficulty=fixture.difficulty,
+                    provisional=fixture.provisional,
+                    clean_sheet_probability=devig.clean_sheet_probability_from_goals(conceded),
+                    expected_team_goals=scored,
+                    expected_goals_conceded=conceded,
+                    win_probability=fixture.win_probability,
+                )
+            )
+        team_gameweeks[team_id] = TeamGameweek(
+            team_id=team_id, gameweek=team_gameweek.gameweek, fixtures=tuple(enriched)
+        )
+
+    if filled:
+        logger.info("Filled clean sheets from the market", extra={"fixtures": filled})
+        run_context.data_quality.add_caveat(
+            f"ClubElo was unavailable, so clean-sheet probabilities for {filled} fixture(s) "
+            "were derived from devigged betting odds instead. That is a market consensus "
+            "rather than a scoreline model, and slightly less precise."
+        )
 
 
 def _resolve_injuries(

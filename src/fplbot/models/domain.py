@@ -248,6 +248,12 @@ class PlayerScore:
     # FPL's own expected points for the next gameweek - our benchmark.
     ep_next: float = 0.0
 
+    # Premier League minutes behind the estimate. Not the model's forecast for
+    # this gameweek - that lives in `components` - but how much evidence exists
+    # about the player at all. A summer signing has zero, and every rate we
+    # attribute to him is the positional prior wearing his name.
+    minutes_played: int = 0
+
     @property
     def mean(self) -> float:
         return self.distribution.mean

@@ -48,17 +48,55 @@ from fplbot.models.domain import (
     RiskLevel,
 )
 
+# How much Premier League football we need behind a player before his own record
+# means anything. Five full matches to hold an opinion at all; a third of a
+# season before we back it at full stake.
+MINUTES_FOR_A_VIEW = 450
+MINUTES_FOR_CONFIDENCE = 1200
 
-def rank_score(score: PlayerScore, tunables: ModelTunables) -> float:
+# Being unowned is only an ADVANTAGE if our expected-points estimate is worth
+# something. For a player with no Premier League record it is not - his rate is
+# the positional prior wearing his name - and yet the raw objective handed him a
+# near-zero ownership discount and floated him up the board on that alone.
+#
+# The naive correction is backwards, and worth naming because it is tempting:
+# shrinking the PENALTY at low confidence makes an unowned player score HIGHER,
+# since his penalty was tiny to begin with. What has to shrink is his
+# ENTITLEMENT to the differential - so low confidence pulls his effective
+# ownership toward the field baseline, and he is scored roughly as an
+# ordinarily-owned player until he has earned the discount.
+#
+# A genuine differential with real history keeps every bit of its edge.
+DIFFERENTIAL_BASELINE_OWNERSHIP = 15.0
+DIFFERENTIAL_STAKE_BY_CONFIDENCE = {
+    Confidence.HIGH: 1.0,
+    Confidence.MEDIUM: 0.6,
+    Confidence.LOW: 0.25,
+}
+
+
+def rank_score(
+    score: PlayerScore, tunables: ModelTunables, confidence: Confidence | None = None
+) -> float:
     """The rank-attacking objective.
 
-        score = xP - lambda * (ownership * xP) + mu * ceiling
+        score = xP - lambda * (effective_ownership * xP) + mu * ceiling
 
     Ownership enters as a fraction, so a 60%-owned player with 6.5 xP and
     lambda = 0.55 loses 0.55 * 0.60 * 6.5 = 2.15 points of *rank* value while
     keeping all 6.5 points of raw value. That gap is the whole point.
+
+    `effective_ownership` pulls a low-confidence player's ownership toward the
+    field baseline, so an unknown stops collecting a differential edge he has not
+    earned. Passing `confidence` is optional only so existing callers keep
+    working; the board always passes it.
     """
-    ownership_fraction = min(1.0, score.ownership / 100.0)
+    stake = DIFFERENTIAL_STAKE_BY_CONFIDENCE.get(confidence or Confidence.HIGH, 1.0)
+    # Pull toward the baseline rather than toward zero - see the note above.
+    effective_ownership = score.ownership + (1.0 - stake) * (
+        DIFFERENTIAL_BASELINE_OWNERSHIP - score.ownership
+    )
+    ownership_fraction = min(1.0, max(0.0, effective_ownership) / 100.0)
     expected = score.mean
     return (
         expected
@@ -91,6 +129,17 @@ def assess_confidence(score: PlayerScore) -> Confidence:
         return Confidence.LOW
 
     if availability.level is RiskLevel.DOUBT:
+        return Confidence.MEDIUM
+
+    # No Premier League history means every rate we attribute to this player is
+    # the positional prior wearing his name. That produces a NARROW, confident
+    # looking distribution - it is the average forward, after all - so the
+    # spread check below cannot catch it. Without this, three players with zero
+    # PL minutes ranked above a proven 0.50 xG/90 forward in GW1 2026-27, purely
+    # because nobody owned them.
+    if score.minutes_played < MINUTES_FOR_A_VIEW:
+        return Confidence.LOW
+    if score.minutes_played < MINUTES_FOR_CONFIDENCE:
         return Confidence.MEDIUM
 
     # A wide distribution relative to its mean means the model itself is
@@ -242,7 +291,11 @@ def build_buy_board(
     board: dict[str, list[Recommendation]] = {}
     for position in ("GKP", "DEF", "MID", "FWD"):
         candidates = by_position.get(position, [])
-        ranked = sorted(candidates, key=lambda s: rank_score(s, tunables), reverse=True)
+        ranked = sorted(
+            candidates,
+            key=lambda s: rank_score(s, tunables, assess_confidence(s)),
+            reverse=True,
+        )
 
         recommendations: list[Recommendation] = []
         for index, score in enumerate(ranked[:per_position]):
@@ -253,7 +306,7 @@ def build_buy_board(
             recommendations.append(
                 Recommendation(
                     score=score,
-                    rank_score=round(rank_score(score, tunables), 3),
+                    rank_score=round(rank_score(score, tunables, assess_confidence(score)), 3),
                     confidence=assess_confidence(score),
                     why=explain(score, tunables),
                     runner_up=runner_up,

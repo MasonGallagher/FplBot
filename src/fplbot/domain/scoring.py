@@ -630,4 +630,5 @@ def build_player_score(
         components={k: round(v, 3) for k, v in components.items()},
         opponents=opponent_names,
         ep_next=element.ep_next_value,
+        minutes_played=element.minutes,
     )
