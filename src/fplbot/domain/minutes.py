@@ -272,10 +272,18 @@ def _with_starter_floor(base: MinutesDistribution, floor: float) -> MinutesDistr
 
 
 def _injury_status_ceiling(status: str) -> float:
-    """PremierInjuries `Status` -> maximum probability of playing."""
+    """PremierInjuries `Status` -> maximum probability of playing.
+
+    "100%" is listed explicitly rather than left to the unrecognised-value
+    default below, even though both currently resolve to the same 1.0: a
+    recognised "fully fit" reading and an unrecognised status defaulting to
+    "assume fit" are different situations, and conflating them made the
+    former look, in a debugger, like it was silently falling through.
+    """
     return {
         "Ruled Out": 0.0,
         "25%": 0.25,
         "50%": 0.50,
         "75%": 0.75,
+        "100%": 1.0,
     }.get(status, 1.0)

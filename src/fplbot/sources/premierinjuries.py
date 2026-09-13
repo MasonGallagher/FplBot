@@ -27,14 +27,20 @@ FOUR PARSING TRAPS, ALL LIVE
    A suspension has a deterministic end date; modelling its "return probability"
    as though it were a fitness question is simply the wrong model.
 
-CONTROLLED VOCABULARIES
------------------------
-    Status    -> "Ruled Out" | "25%" | "50%" | "75%"
-    Condition -> "Currently Being Assessed" | "Not Available"
+CONTROLLED VOCABULARY
+---------------------
+    Status -> "Ruled Out" | "25%" | "50%" | "75%" | "100%"
 
-Both are closed sets and both are asserted. An unrecognised value is a semantic
-change, not a parse error, and we would much rather map it by hand than let it
-fall through to a default of "fit".
+A closed set, asserted in `domain.invariants.check_injury_vocabulary`. An
+unrecognised value is a semantic change, not a parse error, and we would much
+rather map it by hand than let it fall through to a default of "fit".
+
+`Condition` is NOT a controlled vocabulary, despite looking like one - it is
+free descriptive text ("Passed Fit", "Late Fitness Test", a specific injury...)
+with exactly one load-bearing value, "Currently Being Assessed", checked by
+equality wherever it matters rather than validated as a closed set. See
+`check_injury_vocabulary`'s docstring for why treating the whole field as an
+enum was itself the bug.
 
 `Currently Being Assessed` is the load-bearing one: it is the "a press conference
 will resolve this" flag, and it defines the Phase 2 re-check set. On the live
@@ -71,8 +77,8 @@ class InjuryRecord:
     name: str  # from data-name, which is clean and unpolluted
     team_id: str | None  # PremierInjuries' team id, not FPL's
     team_name: str | None
-    status: str | None  # Ruled Out | 25% | 50% | 75%
-    condition: str | None  # Currently Being Assessed | Not Available
+    status: str | None  # Ruled Out | 25% | 50% | 75% | 100%
+    condition: str | None  # free text; "Currently Being Assessed" is the one load-bearing value
     reason: str | None  # includes "Suspended"
     potential_return: date | None
     raw: dict[str, str] = field(default_factory=dict)
@@ -100,6 +106,7 @@ class InjuryRecord:
             "25%": 25,
             "50%": 50,
             "75%": 75,
+            "100%": 100,
         }.get(self.status or "", 100)
 
 
@@ -135,7 +142,7 @@ def fetch_injuries(context: SourceContext) -> SourceResult[InjuryData]:
             ext="html",
         )
         data = parse_injury_table(result.text())
-        check_injury_vocabulary(data.statuses_seen, data.conditions_seen, context.quality)
+        check_injury_vocabulary(data.statuses_seen, context.quality)
         return data
 
     return with_fallback(

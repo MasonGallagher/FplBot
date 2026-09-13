@@ -18,7 +18,7 @@ from fplbot.http.client import HttpClient, HttpFetchError
 from fplbot.sources.clubelo import _parse_fixture_row
 from fplbot.sources.ffs import PHOTO_CODE_PATTERN, parse_lineups
 from fplbot.sources.oddsapi import _parse_featured, match_probabilities
-from fplbot.sources.premierinjuries import parse_injury_table, parse_uk_date
+from fplbot.sources.premierinjuries import InjuryRecord, parse_injury_table, parse_uk_date
 from fplbot.sources.understat import UnderstatData, _coerce_teams, _to_float, forecast_probabilities
 
 # ---------------------------------------------------------------------------
@@ -204,6 +204,23 @@ class TestPremierInjuries:
 
         assert data.statuses_seen == {"50%", "Ruled Out"}
         assert data.conditions_seen == {"Currently Being Assessed", "Not Available"}
+
+    def test_a_hundred_percent_status_maps_to_fully_fit(self) -> None:
+        """"100%" is a real, common Status value - fully fit, no restriction -
+        not an unrecognised one falling through to the same answer by
+        accident."""
+        record = InjuryRecord(
+            source_id="1",
+            name="Test Player",
+            team_id="1",
+            team_name="Test FC",
+            status="100%",
+            condition=None,
+            reason=None,
+            potential_return=None,
+        )
+
+        assert record.chance_of_playing == 100
 
 
 class TestUkDates:

@@ -142,15 +142,21 @@ class TestSourceSchemaAssertions:
         assert "R:7-0" not in columns
         assert check_clubelo_fixture_columns(columns) is True
 
-    def test_injury_vocabulary_is_closed(self) -> None:
-        """An unrecognised value is a semantic change, not a parse error.
+    def test_status_vocabulary_is_closed(self) -> None:
+        """`Status` is genuinely closed: every value maps to an exact
+        availability percentage, so an unrecognised one is a semantic change -
+        better to map it by hand than let it fall through to a default of
+        'fit'."""
+        assert check_injury_vocabulary({"Ruled Out", "50%", "100%"}) is True
+        assert check_injury_vocabulary({"Probably Fine"}) is False
 
-        Better to map it by hand than to let it fall through to a default of
-        'fit'.
-        """
-        assert check_injury_vocabulary({"Ruled Out", "50%"}, {"Not Available"}) is True
-        assert check_injury_vocabulary({"Probably Fine"}, {"Not Available"}) is False
-        assert check_injury_vocabulary({"50%"}, {"Vibes Based Assessment"}) is False
+    def test_condition_is_free_text_not_a_vocabulary(self) -> None:
+        """Regression test: `Condition` used to be validated against a
+        two-item closed set and flagged almost any ordinary descriptive note
+        ("Passed Fit", "Late Fitness Test") as an "unexpected value" every
+        week. It was never a closed set - only `Status` is - so an unfamiliar
+        Condition string must not fail the check on its own."""
+        assert check_injury_vocabulary({"50%"}) is True
 
 
 def _clubelo_columns() -> list[str]:

@@ -199,8 +199,7 @@ UNDERSTAT_PLAYER_KEYS = {
     "red_cards",
 }
 
-PREMIER_INJURIES_STATUSES = {"Ruled Out", "25%", "50%", "75%"}
-PREMIER_INJURIES_CONDITIONS = {"Currently Being Assessed", "Not Available"}
+PREMIER_INJURIES_STATUSES = {"Ruled Out", "25%", "50%", "75%", "100%"}
 
 # Informational only - the check asserts structure, not this number. ClubElo
 # served 44 when the spec was written and 45 by late July 2026; both are fine,
@@ -295,23 +294,34 @@ def check_clubelo_fixture_columns(columns: list[str], quality: DataQuality | Non
     return False
 
 
-def check_injury_vocabulary(
-    statuses: set[str], conditions: set[str], quality: DataQuality | None = None
-) -> bool:
-    """Assert PremierInjuries' controlled vocabularies have not grown.
+def check_injury_vocabulary(statuses: set[str], quality: DataQuality | None = None) -> bool:
+    """Assert PremierInjuries' `Status` scale has not grown an unmapped value.
 
-    `Status` and `Condition` are closed sets. An unrecognised value is not a
-    parse error - it is a *semantic* change, and we would rather map it by hand
-    than have it silently fall through to a default of "fit".
+    `Status` is a genuinely closed set: every value maps to an exact
+    availability percentage in two independent places (`InjuryRecord.
+    chance_of_playing`, `domain.minutes._injury_status_ceiling`), so an
+    unrecognised one is a real semantic change - it would otherwise fall
+    through to a default of "fully fit", which is exactly backwards for a
+    genuinely new *negative* status.
+
+    `Condition` used to be checked here too, against a two-value closed set
+    (`{"Currently Being Assessed", "Not Available"}`). It never was a closed
+    set - it is free descriptive text ("Passed Fit", "Late Fitness Test", a
+    specific injury...) with exactly ONE load-bearing value in the whole
+    field: "Currently Being Assessed" gates the Phase 2 re-check set
+    (`AvailabilitySignal.awaiting_press_conference`), and nothing else
+    anywhere branches on `Condition` at all. Validating the entire field
+    against that two-item set flagged an ordinary descriptive note as an
+    "unexpected value" most weeks. A caveat that cries wolf is worse than no
+    caveat - see `check_clubelo_fixture_columns` for the same lesson learned
+    the same way - because the section it appears in is exactly where a real
+    integrity failure needs to be noticed rather than lost in routine noise.
+    So `Condition` is free text and is not validated here.
     """
     unknown_status = statuses - PREMIER_INJURIES_STATUSES
-    unknown_condition = conditions - PREMIER_INJURIES_CONDITIONS
-    if not unknown_status and not unknown_condition:
+    if not unknown_status:
         return True
-    detail = (
-        f"unexpected PremierInjuries values - Status: {sorted(unknown_status)}, "
-        f"Condition: {sorted(unknown_condition)}"
-    )
+    detail = f"unexpected PremierInjuries Status value(s) {sorted(unknown_status)}"
     report_invariant_violation("premierinjuries_vocabulary", detail)
     if quality:
         quality.invariant_failures.append(detail)
