@@ -389,7 +389,7 @@ model rather than like a bug.
 The dashed return arrow is the part that does not exist yet. Every coefficient in
 `ModelTunables` is still a hand-picked prior; this loop is what makes replacing
 them with fitted values something that can be *evaluated* rather than guessed at.
-See [MODEL.md](MODEL.md) section 8.
+See [MODEL.md](MODEL.md) section 9.
 
 ## 2.6 Module layering
 
