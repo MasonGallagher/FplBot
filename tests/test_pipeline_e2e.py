@@ -300,8 +300,63 @@ class TestFullRun:
 
 
 # ---------------------------------------------------------------------------
-# Idempotency
+# ClubElo degradation
 # ---------------------------------------------------------------------------
+class TestClubEloDegradation:
+    """A 200 with a broken CSV shape must degrade like any other failure.
+
+    Regression coverage for the gap `stub_endpoints`'s blanket 503 never
+    exercised: ClubElo returning 200 with a response that fails the
+    column-shape check (missing Home/Away, no R: columns, or a gap in them)
+    used to be treated as a *successful* fetch of zero fixtures - `with_
+    fallback` only degrades to last-known-good on an exception, and nothing
+    raised. That meant a perfectly good cached scoreline distribution from
+    the previous run sat unused while every clean sheet fell through to the
+    strictly worse odds-derived fallback, with no "using cached data" caveat
+    to explain why - exactly what happened in the GW3 2026-27 report.
+    """
+
+    @respx.mock
+    def test_a_malformed_response_falls_back_to_cached_clubelo_data(self, wired) -> None:
+        good_payload = {
+            "matches": [
+                {
+                    "home_club": "Arsenal",
+                    "away_club": "Newcastle",
+                    "kickoff": None,
+                    "home_win": 0.6,
+                    "draw": 0.25,
+                    "away_win": 0.15,
+                    "home_clean_sheet": 0.42,
+                    "away_clean_sheet": 0.08,
+                    "expected_home_goals": 1.8,
+                    "expected_away_goals": 0.7,
+                }
+            ]
+        }
+        wired["store"].last_known_good["clubelo_fixtures"] = good_payload
+
+        stub_endpoints(wired["bootstrap"], wired["fixtures"])
+        # Override the blanket 503: this is the "200 but unusable" case, not a
+        # transport failure - the shape check must be what raises, not the
+        # HTTP layer.
+        respx.get("http://api.clubelo.com/Fixtures").mock(
+            return_value=httpx.Response(
+                200,
+                content=b"Country,SomethingUnrelated\nENG,whatever\n",
+                headers={"content-type": "text/csv"},
+            )
+        )
+
+        outcome = pipeline.run(now_epoch=DEADLINE_EPOCH - 20 * HOUR)
+        html = wired["email"].sent[0]["html"]
+
+        assert outcome.status == "sent"
+        # The cached distribution was used ...
+        assert "clubelo_fixtures: unavailable, using cached data" in html
+        # ... which means the odds-derived fallback never had a gap to fill for
+        # the Arsenal-Newcastle fixture the cache covers.
+        assert "devigged betting odds" not in html
 class TestIdempotency:
     @respx.mock
     def test_a_second_run_in_the_same_tier_is_suppressed(self, wired) -> None:

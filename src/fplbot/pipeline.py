@@ -28,7 +28,7 @@ ceiling, and then we email about the *failure* rather than about transfers.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import numpy as np
@@ -462,14 +462,16 @@ def _apply_clubelo(
             # FixtureContext is frozen, so we rebuild rather than mutate. Frozen
             # dataclasses in the domain layer are deliberate: it makes accidental
             # action-at-a-distance impossible.
+            #
+            # dataclasses.replace, not a field-by-field constructor call: the
+            # constructor call used to list every field explicitly, which is
+            # exactly how `kickoff_epoch` got silently dropped for every
+            # ClubElo-enriched fixture when that field was added - a new field
+            # is invisible to a list that has to be updated by hand, but
+            # `replace` carries it forward for free.
             enriched.append(
-                type(fixture)(
-                    fixture_id=fixture.fixture_id,
-                    team_id=fixture.team_id,
-                    opponent_id=fixture.opponent_id,
-                    is_home=fixture.is_home,
-                    difficulty=fixture.difficulty,
-                    provisional=fixture.provisional,
+                replace(
+                    fixture,
                     clean_sheet_probability=match.clean_sheet_for(is_home=fixture.is_home),
                     expected_team_goals=match.expected_goals_for(is_home=fixture.is_home),
                     expected_goals_conceded=match.expected_conceded_for(is_home=fixture.is_home),
@@ -543,18 +545,15 @@ def _apply_odds_clean_sheets(
             conceded = lam_away if fixture.is_home else lam_home
             scored = lam_home if fixture.is_home else lam_away
             filled += 1
+            # dataclasses.replace - see `_apply_clubelo` for why, not a
+            # field-by-field constructor call that silently drops any field
+            # (kickoff_epoch, previously) not added to the list by hand.
             enriched.append(
-                type(fixture)(
-                    fixture_id=fixture.fixture_id,
-                    team_id=fixture.team_id,
-                    opponent_id=fixture.opponent_id,
-                    is_home=fixture.is_home,
-                    difficulty=fixture.difficulty,
-                    provisional=fixture.provisional,
+                replace(
+                    fixture,
                     clean_sheet_probability=devig.clean_sheet_probability_from_goals(conceded),
                     expected_team_goals=scored,
                     expected_goals_conceded=conceded,
-                    win_probability=fixture.win_probability,
                 )
             )
         team_gameweeks[team_id] = TeamGameweek(
