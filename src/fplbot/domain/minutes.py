@@ -87,6 +87,58 @@ class MinutesDistribution:
         )
 
 
+def lineup_confidence(hours_to_kickoff: float | None) -> float:
+    """How much to trust an FFS predicted line-up for ONE SPECIFIC fixture, now.
+
+    `is_predicted_to_start` is a single flag per player per gameweek, but a
+    gameweek's fixtures can span four days - the report's own "CONFIRMED" tier
+    is timed off the *gameweek deadline*, not off each fixture's own kickoff
+    (`domain.deadline.is_confirmed_phase`). For a fixture kicking off shortly
+    after the deadline that is fine: press conferences have landed. For one two
+    days out it is not - the scrape simply predates the team news that would
+    make it trustworthy, and treating an early absence from a "predicted XI" as
+    equivalent to a post-presser one is exactly the failure this function exists
+    to prevent.
+
+    GW3 2026-27 is the postmortem: seven Arsenal players - including both
+    goalscorers - were flagged "not in the predicted xi" and sent to
+    sell/avoid, because their fixture kicked off ~45 hours after the deadline
+    and FFS's line-up at scrape time had not caught up with the actual team
+    news yet.
+
+    Returns 1.0 (full trust) inside `lineup_fresh_hours` of kickoff, ramps
+    linearly down to 0.0 (no trust - fall back to the base rate) by
+    `lineup_stale_hours`, and returns 1.0 when the kickoff time itself is
+    unknown - an absent input is not evidence of staleness, and silently
+    discounting a signal we have no actual basis to doubt would just trade one
+    unjustified confidence for another.
+    """
+    if hours_to_kickoff is None:
+        return 1.0
+    fresh, stale = TUNABLES.lineup_fresh_hours, TUNABLES.lineup_stale_hours
+    if hours_to_kickoff <= fresh:
+        return 1.0
+    if hours_to_kickoff >= stale:
+        return 0.0
+    return 1.0 - (hours_to_kickoff - fresh) / (stale - fresh)
+
+
+def _blend(base: MinutesDistribution, other: MinutesDistribution, weight: float) -> MinutesDistribution:
+    """Linear interpolation: `weight` of `other`, the rest of `base`.
+
+    `weight=1` reproduces `other` exactly (the fully-trusted case, and what
+    every existing caller that ignores `hours_to_kickoff` still gets);
+    `weight=0` reproduces `base` unchanged, i.e. the line-up signal is
+    discarded entirely in favour of the price/history prior.
+    """
+    return MinutesDistribution(
+        starter=base.starter * (1 - weight) + other.starter * weight,
+        rotation=base.rotation * (1 - weight) + other.rotation * weight,
+        cameo=base.cameo * (1 - weight) + other.cameo * weight,
+        out=base.out * (1 - weight) + other.out * weight,
+    ).normalised()
+
+
 def estimate_minutes(
     element: Element,
     availability: AvailabilitySignal,
@@ -94,6 +146,7 @@ def estimate_minutes(
     season_has_started: bool,
     predicted_to_start: bool | None = None,
     games_played: int = 0,
+    hours_to_kickoff: float | None = None,
 ) -> MinutesDistribution:
     """Build a minutes distribution for one player in one fixture.
 
@@ -103,6 +156,9 @@ def estimate_minutes(
             has been reset, so using them silently mixes two seasons.
         predicted_to_start: from FFS predicted line-ups, or None if unavailable.
         games_played: team's games so far, for the starts ratio denominator.
+        hours_to_kickoff: hours from now until this player's own fixture kicks
+            off, or None if unknown. Scales how much `predicted_to_start` is
+            allowed to move the distribution - see `lineup_confidence`.
     """
     # -- 1. Base rates from history, or a neutral prior ---------------------
     if season_has_started and games_played > 0 and element.minutes > 0:
@@ -133,27 +189,32 @@ def estimate_minutes(
         else:
             base = MinutesDistribution(0.18, 0.22, 0.35, 0.25)
 
-    # -- 2. Predicted line-ups override the base rate ----------------------
-    # This is the freshest signal we have: FFS updates it after press conferences,
-    # so it reflects information that no season aggregate can.
-    if predicted_to_start is True:
+    # -- 2. Predicted line-ups override the base rate -----------------------
+    # This is the freshest signal we have IF the scrape actually happened after
+    # press conferences for THIS fixture - `confidence` discounts it when the
+    # fixture's own kickoff is still days away and the "prediction" therefore
+    # predates the team news it claims to reflect. See `lineup_confidence`.
+    confidence = lineup_confidence(hours_to_kickoff)
+    if predicted_to_start is True and confidence > 0:
         # Set the starter probability to a floor and redistribute the remainder
         # across the other buckets in their existing proportions. Clamping each
         # bucket independently and then normalising would NOT preserve the floor:
         # the four clamped values sum to more than 1, so normalising drags the
         # starter probability back below 0.85 - quietly undoing the override.
-        base = _with_starter_floor(base, 0.85)
-    elif predicted_to_start is False:
+        floored = _with_starter_floor(base, 0.85)
+        base = _blend(base, floored, confidence)
+    elif predicted_to_start is False and confidence > 0:
         # Predicted NOT to start is weaker evidence than predicted to start:
         # line-ups are eleven names and a squad is twenty-five, so being absent
         # from the XI is partly just a shortlist artefact. We shift towards the
         # bench without slamming the door.
-        base = MinutesDistribution(
+        demoted = MinutesDistribution(
             starter=base.starter * 0.30,
             rotation=base.rotation,
             cameo=base.cameo + 0.15,
             out=base.out + 0.05,
         ).normalised()
+        base = _blend(base, demoted, confidence)
 
     # -- 3. Availability caps everything -----------------------------------
     # A 25% player cannot be an 85% starter, whatever a line-up predicted before
@@ -211,10 +272,18 @@ def _with_starter_floor(base: MinutesDistribution, floor: float) -> MinutesDistr
 
 
 def _injury_status_ceiling(status: str) -> float:
-    """PremierInjuries `Status` -> maximum probability of playing."""
+    """PremierInjuries `Status` -> maximum probability of playing.
+
+    "100%" is listed explicitly rather than left to the unrecognised-value
+    default below, even though both currently resolve to the same 1.0: a
+    recognised "fully fit" reading and an unrecognised status defaulting to
+    "assume fit" are different situations, and conflating them made the
+    former look, in a debugger, like it was silently falling through.
+    """
     return {
         "Ruled Out": 0.0,
         "25%": 0.25,
         "50%": 0.50,
         "75%": 0.75,
+        "100%": 1.0,
     }.get(status, 1.0)

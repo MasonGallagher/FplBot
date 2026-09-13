@@ -28,7 +28,7 @@ ceiling, and then we email about the *failure* rather than about transfers.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
 import numpy as np
@@ -295,7 +295,7 @@ def _produce_and_send(
 
     # -- 9. Transfer-flow analysis ----------------------------------------
     signals = _build_availability_signals(
-        context, bootstrap, run_context, injury_by_element, lineups.data
+        context, bootstrap, run_context, injury_by_element, lineups.data, team_gameweeks
     )
 
     # -- 10. Score ---------------------------------------------------------
@@ -308,7 +308,7 @@ def _produce_and_send(
         last_season_by_element,
     )
     scores, minutes_by_element = _score_all(
-        bootstrap, team_gameweeks, signals, scoring_context, lineups.data
+        bootstrap, team_gameweeks, signals, scoring_context, lineups.data, run_context.now_epoch
     )
 
     # -- 11. Project the rest of the season --------------------------------
@@ -462,14 +462,16 @@ def _apply_clubelo(
             # FixtureContext is frozen, so we rebuild rather than mutate. Frozen
             # dataclasses in the domain layer are deliberate: it makes accidental
             # action-at-a-distance impossible.
+            #
+            # dataclasses.replace, not a field-by-field constructor call: the
+            # constructor call used to list every field explicitly, which is
+            # exactly how `kickoff_epoch` got silently dropped for every
+            # ClubElo-enriched fixture when that field was added - a new field
+            # is invisible to a list that has to be updated by hand, but
+            # `replace` carries it forward for free.
             enriched.append(
-                type(fixture)(
-                    fixture_id=fixture.fixture_id,
-                    team_id=fixture.team_id,
-                    opponent_id=fixture.opponent_id,
-                    is_home=fixture.is_home,
-                    difficulty=fixture.difficulty,
-                    provisional=fixture.provisional,
+                replace(
+                    fixture,
                     clean_sheet_probability=match.clean_sheet_for(is_home=fixture.is_home),
                     expected_team_goals=match.expected_goals_for(is_home=fixture.is_home),
                     expected_goals_conceded=match.expected_conceded_for(is_home=fixture.is_home),
@@ -543,18 +545,15 @@ def _apply_odds_clean_sheets(
             conceded = lam_away if fixture.is_home else lam_home
             scored = lam_home if fixture.is_home else lam_away
             filled += 1
+            # dataclasses.replace - see `_apply_clubelo` for why, not a
+            # field-by-field constructor call that silently drops any field
+            # (kickoff_epoch, previously) not added to the list by hand.
             enriched.append(
-                type(fixture)(
-                    fixture_id=fixture.fixture_id,
-                    team_id=fixture.team_id,
-                    opponent_id=fixture.opponent_id,
-                    is_home=fixture.is_home,
-                    difficulty=fixture.difficulty,
-                    provisional=fixture.provisional,
+                replace(
+                    fixture,
                     clean_sheet_probability=devig.clean_sheet_probability_from_goals(conceded),
                     expected_team_goals=scored,
                     expected_goals_conceded=conceded,
-                    win_probability=fixture.win_probability,
                 )
             )
         team_gameweeks[team_id] = TeamGameweek(
@@ -686,12 +685,28 @@ def _resolve_understat(
 # ---------------------------------------------------------------------------
 # Analysis helpers
 # ---------------------------------------------------------------------------
+def _hours_to_kickoff(team_gameweek: TeamGameweek | None, now_epoch: int) -> float | None:
+    """Hours from now until this team's earliest fixture this gameweek kicks off.
+
+    None when the team has no fixture (a blank) or the kickoff time is unknown
+    (provisional/TBC) - in both cases `lineup_confidence` treats None as full
+    trust rather than guessing at staleness from an absent input.
+    """
+    if team_gameweek is None:
+        return None
+    kickoff_epoch = team_gameweek.earliest_kickoff_epoch
+    if kickoff_epoch is None:
+        return None
+    return (kickoff_epoch - now_epoch) / 3600
+
+
 def _build_availability_signals(
     context: SourceContext,
     bootstrap: Bootstrap,
     run_context: RunContext,
     injuries: dict[int, premierinjuries.InjuryRecord],
     lineups: ffs.LineupData | None,
+    team_gameweeks: dict[int, TeamGameweek],
 ) -> dict[int, AvailabilitySignal]:
     """Fuse FPL, PremierInjuries, predicted line-ups and transfer flow."""
     snapshots = context.store.recent_snapshots(limit=72)
@@ -753,6 +768,8 @@ def _build_availability_signals(
         if element.news_added_at is not None:
             news_age = (run_context.now_epoch - element.news_added_at.timestamp()) / 3600
 
+        hours_to_kickoff = _hours_to_kickoff(team_gameweeks.get(element.team), run_context.now_epoch)
+
         signals[element.id] = availability_domain.build_availability_signal(
             element,
             injury_status=record.status if record else None,
@@ -767,6 +784,7 @@ def _build_availability_signals(
             flow_cause=cause,
             snapshots_available=len(snapshots),
             news_age_hours=news_age,
+            hours_to_kickoff=hours_to_kickoff,
         )
 
     # Suppressed on the confirmed tier: by T-3h the pressers have happened, so a
@@ -880,6 +898,7 @@ def _score_all(
     signals: dict[int, AvailabilitySignal],
     scoring_context: scoring.ScoringContext,
     lineups: ffs.LineupData | None,
+    now_epoch: int,
 ) -> tuple[list[PlayerScore], dict[int, MinutesDistribution]]:
     """Score every transactable player.
 
@@ -914,6 +933,7 @@ def _score_all(
             season_has_started=scoring_context.season_has_started,
             predicted_to_start=predicted,
             games_played=scoring_context.team_games_played.get(element.team, 0),
+            hours_to_kickoff=_hours_to_kickoff(team_gameweek, now_epoch),
         )
         minutes_by_element[element.id] = minutes_dist
 

@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from fplbot.config import TUNABLES
-from fplbot.domain.minutes import MinutesDistribution, estimate_minutes
+from fplbot.domain.minutes import MinutesDistribution, estimate_minutes, lineup_confidence
 from fplbot.domain.scoring import (
     ScoringContext,
     attacking_rates,
@@ -395,3 +395,97 @@ class TestMinutesModel:
         in_season = estimate_minutes(element, CLEAR, season_has_started=True, games_played=30)
 
         assert pre_season.as_tuple() != in_season.as_tuple()
+
+    def test_a_stale_predicted_absence_barely_moves_the_distribution(
+        self, bootstrap: Bootstrap
+    ) -> None:
+        """The GW3 2026-27 postmortem, as a regression test.
+
+        Seven Arsenal players - including both goalscorers - were flagged "not
+        in the predicted xi" and sent to sell/avoid, because their fixture
+        kicked off ~45 hours after the gameweek deadline the "CONFIRMED" tier
+        was timed off, and FFS's scrape at that point simply predated the
+        actual team news. A prediction that stale must not slam a nailed
+        starter's probability down to near-zero the way a fresh one should.
+        """
+        element = next(e for e in bootstrap.elements if e.id == 100)
+        baseline = estimate_minutes(element, CLEAR, season_has_started=True)
+
+        imminent = estimate_minutes(
+            element,
+            CLEAR,
+            season_has_started=True,
+            predicted_to_start=False,
+            hours_to_kickoff=1.0,
+        )
+        stale = estimate_minutes(
+            element,
+            CLEAR,
+            season_has_started=True,
+            predicted_to_start=False,
+            hours_to_kickoff=45.0,
+        )
+
+        assert stale.starter == pytest.approx(baseline.starter)
+        assert stale.starter > imminent.starter
+
+    def test_confidence_ramps_the_demotion_between_fresh_and_stale(
+        self, bootstrap: Bootstrap
+    ) -> None:
+        element = next(e for e in bootstrap.elements if e.id == 100)
+
+        imminent = estimate_minutes(
+            element, CLEAR, season_has_started=True, predicted_to_start=False, hours_to_kickoff=1.0
+        )
+        midway = estimate_minutes(
+            element,
+            CLEAR,
+            season_has_started=True,
+            predicted_to_start=False,
+            hours_to_kickoff=(TUNABLES.lineup_fresh_hours + TUNABLES.lineup_stale_hours) / 2,
+        )
+        stale = estimate_minutes(
+            element, CLEAR, season_has_started=True, predicted_to_start=False, hours_to_kickoff=45.0
+        )
+
+        assert imminent.starter < midway.starter < stale.starter
+
+    def test_a_stale_named_starter_is_not_fully_floored_either(self, bootstrap: Bootstrap) -> None:
+        """The same staleness discount applies symmetrically to a positive
+        prediction: an early "predicted starter" guess deserves less weight
+        too, not just an early absence."""
+        element = next(e for e in bootstrap.elements if e.id == 100)
+        baseline = estimate_minutes(element, CLEAR, season_has_started=True)
+
+        stale = estimate_minutes(
+            element,
+            CLEAR,
+            season_has_started=True,
+            predicted_to_start=True,
+            hours_to_kickoff=45.0,
+        )
+
+        assert stale.starter == pytest.approx(baseline.starter)
+
+
+class TestLineupConfidence:
+    """How much to trust an FFS predicted line-up, as a function of how long
+    until that fixture's own kickoff - see the module docstring for why this
+    exists."""
+
+    def test_full_trust_inside_the_fresh_window(self) -> None:
+        assert lineup_confidence(1.0) == 1.0
+        assert lineup_confidence(TUNABLES.lineup_fresh_hours) == 1.0
+
+    def test_no_trust_beyond_the_stale_window(self) -> None:
+        assert lineup_confidence(TUNABLES.lineup_stale_hours) == 0.0
+        assert lineup_confidence(200.0) == 0.0
+
+    def test_ramps_linearly_between_the_two(self) -> None:
+        midpoint = (TUNABLES.lineup_fresh_hours + TUNABLES.lineup_stale_hours) / 2
+        assert lineup_confidence(midpoint) == pytest.approx(0.5)
+
+    def test_unknown_kickoff_is_full_trust_not_a_discount(self) -> None:
+        """An absent input is not evidence of staleness - discounting it would
+        just trade one unjustified confidence for another."""
+        assert lineup_confidence(None) == 1.0

@@ -362,6 +362,24 @@ class Fixture(DriftTolerantModel):
     stats: list[dict[str, Any]] = Field(default_factory=list)
     pulse_id: int | None = None
 
+    @property
+    def kickoff_at(self) -> Any:
+        """Parsed kickoff time, or None if absent/unparseable.
+
+        FPL's fixtures endpoint gives no epoch field (unlike `Event.
+        deadline_time_epoch`), only this ISO string - always UTC, "Z"-suffixed.
+        Parsing a UTC instant to get an absolute epoch is not the timezone
+        hazard `parse_timestamp`'s own docstring warns deadline arithmetic
+        away from; that warning is about wall-clock/local-time parsing, and
+        there is none here. Used for *recency of the predicted line-up*
+        relative to this fixture's own kickoff - see `domain.minutes.
+        lineup_confidence` - never for deadline maths, which stays on
+        `Event.deadline_time_epoch`.
+        """
+        if self.provisional_start_time:
+            return None
+        return parse_timestamp(self.kickoff_time)
+
     def opponent_of(self, team_id: int) -> int | None:
         if team_id == self.team_h:
             return self.team_a

@@ -85,9 +85,27 @@ The probabilities come from three sources, in increasing order of authority:
 1. **Recent starts** (`starts` / games played), or - in pre-season, where those
    fields hold *last* season's values - price as a proxy for squad status. Clubs
    do not pay 12.0m for a substitute.
-2. **Predicted line-ups** from Fantasy Football Scout. The freshest signal
-   available, because it reflects press conferences. A named starter is floored
-   at 85%.
+2. **Predicted line-ups** from Fantasy Football Scout - *if the scrape happened
+   after that fixture's own press conferences.* This is the freshest signal
+   available, but only once it actually reflects team news: a gameweek's
+   fixtures can span four days, and the report's own "CONFIRMED" tier is timed
+   off the *gameweek deadline*, not off each match's kickoff. A prediction
+   scraped two days before a fixture is not "fresh", it is early, and treating
+   an absence from it as equivalent to a post-presser one inverts the signal.
+   `lineup_confidence` (`domain/minutes.py`) discounts the override linearly
+   between `lineup_fresh_hours` (full trust) and `lineup_stale_hours` (no
+   trust, fall back to the base rate) of that player's own kickoff. A named
+   starter is floored at 85%, scaled by that confidence; a predicted absence
+   is demoted the same way.
+
+   **GW3 2026-27 is why this exists.** Seven Arsenal players - Raya, White,
+   Gabriel Magalhães, Saka, Rice, Ødegaard, Havertz - were flagged "not in the
+   predicted xi" and pushed into the sell/avoid section under a "CONFIRMED -
+   team news has landed" banner, off a scrape taken roughly 45 hours before
+   their fixture kicked off. All seven started. Havertz and Ødegaard scored
+   both of Arsenal's goals. The banner's claim was true for the gameweek's
+   earlier fixtures and false for this one, and nothing distinguished the two
+   before this fix.
 3. **Availability**, which *caps* everything. A 25% player cannot be an 85%
    starter, whatever a line-up predicted three days ago.
 

@@ -268,6 +268,59 @@ class TestCompositeSignal:
 
         assert 0.0 <= signal.risk <= 1.0
 
+    def test_an_imminent_predicted_absence_raises_risk(self, bootstrap: Bootstrap) -> None:
+        element = bootstrap.elements[0]
+
+        signal = build_availability_signal(
+            element, predicted_to_start=False, hours_to_kickoff=1.0
+        )
+
+        assert signal.risk >= 0.30
+        assert any("predicted XI" in note for note in signal.notes)
+
+    def test_a_stale_predicted_absence_is_not_yet_team_news(self, bootstrap: Bootstrap) -> None:
+        """GW3 2026-27 postmortem, as a regression test.
+
+        Arsenal's back four and front four - Raya, White, Gabriel Magalhaes,
+        Saka, Rice, Odegaard, Havertz - were all flagged "not in the predicted
+        xi" and pushed into sell/avoid off a scrape taken ~45 hours before
+        their fixture, well before real team news for it existed. Two of them
+        scored the goals that won the match. An absence that stale must not be
+        treated as equivalent to one confirmed right before kickoff.
+        """
+        element = bootstrap.elements[0]
+
+        baseline = build_availability_signal(element)
+        # Fully stale (>= lineup_stale_hours): no trust at all, so the absence
+        # is not treated as information and risk is untouched.
+        stale = build_availability_signal(
+            element, predicted_to_start=False, hours_to_kickoff=45.0
+        )
+        assert stale.risk == pytest.approx(baseline.risk)
+
+        # Partially stale (between fresh and stale): trusted a little, and the
+        # note says so rather than presenting it as confirmed team news.
+        partial = build_availability_signal(
+            element, predicted_to_start=False, hours_to_kickoff=21.0
+        )
+        assert any("provisional" in note for note in partial.notes)
+
+    def test_confidence_ramps_the_risk_bump_between_fresh_and_stale(
+        self, bootstrap: Bootstrap
+    ) -> None:
+        element = bootstrap.elements[0]
+
+        imminent = build_availability_signal(
+            element, predicted_to_start=False, hours_to_kickoff=1.0
+        )
+        midway = build_availability_signal(
+            element,
+            predicted_to_start=False,
+            hours_to_kickoff=(TUNABLES.lineup_fresh_hours + TUNABLES.lineup_stale_hours) / 2,
+        )
+
+        assert imminent.risk > midway.risk
+
 
 class TestColdStart:
     def test_caveat_appears_when_history_is_thin(self) -> None:

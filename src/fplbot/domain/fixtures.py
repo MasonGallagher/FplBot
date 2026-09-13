@@ -57,6 +57,8 @@ def build_team_gameweeks(
     per_team: dict[int, list[FixtureContext]] = defaultdict(list)
 
     for fixture in scheduled:
+        kickoff_at = fixture.kickoff_at
+        kickoff_epoch = kickoff_at.timestamp() if kickoff_at is not None else None
         for team_id, is_home in ((fixture.team_h, True), (fixture.team_a, False)):
             opponent = fixture.opponent_of(team_id)
             if opponent is None:
@@ -69,6 +71,7 @@ def build_team_gameweeks(
                     is_home=is_home,
                     difficulty=fixture.difficulty_for(team_id),
                     provisional=fixture.provisional_start_time,
+                    kickoff_epoch=kickoff_epoch,
                 )
             )
 

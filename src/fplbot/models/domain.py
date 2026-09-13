@@ -110,6 +110,10 @@ class FixtureContext:
     expected_team_goals: float | None = None
     expected_goals_conceded: float | None = None
     win_probability: float | None = None
+    # Unix epoch of this fixture's own kickoff, or None if unknown/provisional.
+    # Used to judge how much to trust an FFS predicted line-up for this specific
+    # match - see `domain.minutes.lineup_confidence` - never for deadline maths.
+    kickoff_epoch: float | None = None
 
 
 @dataclass(frozen=True)
@@ -138,6 +142,19 @@ class TeamGameweek:
     @property
     def count(self) -> int:
         return len(self.fixtures)
+
+    @property
+    def earliest_kickoff_epoch(self) -> float | None:
+        """The soonest of this team's kickoffs this gameweek, or None if unknown.
+
+        The single representative time used to judge how fresh an FFS predicted
+        line-up is: a team's press conference and team-news cycle is per-match,
+        but `is_predicted_to_start` is one flag per player per gameweek, so the
+        earliest fixture is the earliest it could possibly have been informed by
+        real team news.
+        """
+        known = [f.kickoff_epoch for f in self.fixtures if f.kickoff_epoch is not None]
+        return min(known) if known else None
 
 
 # ---------------------------------------------------------------------------

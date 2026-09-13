@@ -66,6 +66,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from fplbot.config import TUNABLES
+from fplbot.domain.minutes import lineup_confidence
 from fplbot.models.domain import AvailabilitySignal, RiskLevel
 from fplbot.models.fpl import Element, Event
 from fplbot.observability import logger
@@ -218,6 +219,7 @@ def build_availability_signal(
     flow_cause: str | None = None,
     snapshots_available: int = 0,
     news_age_hours: float | None = None,
+    hours_to_kickoff: float | None = None,
 ) -> AvailabilitySignal:
     """Fuse every availability input into one risk score in [0, 1].
 
@@ -288,10 +290,22 @@ def build_availability_signal(
             f"not a confirmation."
         )
 
-    # -- Predicted line-ups ------------------------------------------------
-    if predicted_to_start is False and risk < 0.3:
-        risk = max(risk, 0.30)
-        signal.notes.append("Not in Fantasy Football Scout's predicted XI.")
+    # -- Predicted line-ups -------------------------------------------------
+    # Gated by `lineup_confidence`: an absence from a line-up scraped days
+    # before that fixture's own kickoff is not yet team news, whatever the
+    # gameweek's overall notification tier claims - see its docstring for the
+    # GW3 postmortem this guards against.
+    confidence = lineup_confidence(hours_to_kickoff)
+    if predicted_to_start is False and confidence > 0 and risk < 0.3:
+        risk = max(risk, 0.30 * confidence)
+        if confidence >= 0.99:
+            signal.notes.append("Not in Fantasy Football Scout's predicted XI.")
+        else:
+            signal.notes.append(
+                "Not in Fantasy Football Scout's predicted XI as of this scrape, but "
+                "that fixture's kickoff is still far enough away that the line-up "
+                "may not reflect real team news yet - treat as provisional."
+            )
     elif predicted_to_start is True:
         signal.corroborating_sources.append("ffs")
 

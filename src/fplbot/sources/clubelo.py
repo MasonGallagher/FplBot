@@ -183,7 +183,22 @@ def fetch_fixture_probabilities(
         )
         reader = csv.DictReader(io.StringIO(result.text()))
         columns = reader.fieldnames or []
-        check_clubelo_fixture_columns(columns, context.quality)
+        if not check_clubelo_fixture_columns(columns, context.quality):
+            # The 200 came back, but the shape our derivation depends on is not
+            # there - Home/Away missing, no R: columns, or a gap that makes the
+            # clean-sheet sum wrong. Every row would silently parse to nothing
+            # useful (or, in the gap case, to a wrong number that *looks*
+            # useful), and returning that quietly as "0 fixtures" or "here are
+            # some numbers" would tell `with_fallback` this fetch succeeded -
+            # which skips the last-known-good fallback entirely and forces the
+            # odds-derived clean sheets, a source this module's own docstring
+            # rates as strictly worse. Raise instead, so the exception path
+            # degrades to yesterday's ClubElo data - almost certainly still
+            # correct, since scoreline distributions do not move fixture to
+            # fixture - and says so honestly rather than reporting OK on zero
+            # usable rows. `check_clubelo_fixture_columns` has already logged
+            # and recorded the specific diagnostic above.
+            raise ValueError("ClubElo /Fixtures failed the column-shape check")
 
         matches: list[MatchProbabilities] = []
         for row in reader:
