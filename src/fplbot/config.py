@@ -272,6 +272,20 @@ class ModelTunables:
         default_factory=lambda: {"starter": 84.0, "rotation": 55.0, "cameo": 18.0, "out": 0.0}
     )
 
+    # How much to trust an FFS predicted line-up, as a function of hours until
+    # THAT FIXTURE'S OWN kickoff - not the gameweek deadline. A gameweek's
+    # fixtures can span four days, so a report timed off the deadline (the
+    # "CONFIRMED" T-3h tier included) can be hours away from one match and two
+    # days away from another. Below `lineup_stale_hours` the scraped line-up
+    # predates the press conferences that would make it trustworthy and is
+    # treated as pure noise; above `lineup_fresh_hours` it is trusted in full;
+    # between the two, trust ramps down linearly. Postmortem: GW3 2026-27 sent
+    # seven Arsenal players - including both goalscorers - to "sell/avoid" as
+    # "not in the predicted xi", because their fixture kicked off 45 hours after
+    # the deadline and the early FFS scrape simply had not caught up yet.
+    lineup_fresh_hours: float = 6.0
+    lineup_stale_hours: float = 36.0
+
     # --- DefCon (SPEC 4.0 / 5.2) -------------------------------------------
     # UNVERIFIED, community-sourced. The API exposes the *points* for defensive
     # contribution but not the *thresholds*. Do not treat these as fact; they are

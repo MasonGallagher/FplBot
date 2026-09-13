@@ -295,7 +295,7 @@ def _produce_and_send(
 
     # -- 9. Transfer-flow analysis ----------------------------------------
     signals = _build_availability_signals(
-        context, bootstrap, run_context, injury_by_element, lineups.data
+        context, bootstrap, run_context, injury_by_element, lineups.data, team_gameweeks
     )
 
     # -- 10. Score ---------------------------------------------------------
@@ -308,7 +308,7 @@ def _produce_and_send(
         last_season_by_element,
     )
     scores, minutes_by_element = _score_all(
-        bootstrap, team_gameweeks, signals, scoring_context, lineups.data
+        bootstrap, team_gameweeks, signals, scoring_context, lineups.data, run_context.now_epoch
     )
 
     # -- 11. Project the rest of the season --------------------------------
@@ -686,12 +686,28 @@ def _resolve_understat(
 # ---------------------------------------------------------------------------
 # Analysis helpers
 # ---------------------------------------------------------------------------
+def _hours_to_kickoff(team_gameweek: TeamGameweek | None, now_epoch: int) -> float | None:
+    """Hours from now until this team's earliest fixture this gameweek kicks off.
+
+    None when the team has no fixture (a blank) or the kickoff time is unknown
+    (provisional/TBC) - in both cases `lineup_confidence` treats None as full
+    trust rather than guessing at staleness from an absent input.
+    """
+    if team_gameweek is None:
+        return None
+    kickoff_epoch = team_gameweek.earliest_kickoff_epoch
+    if kickoff_epoch is None:
+        return None
+    return (kickoff_epoch - now_epoch) / 3600
+
+
 def _build_availability_signals(
     context: SourceContext,
     bootstrap: Bootstrap,
     run_context: RunContext,
     injuries: dict[int, premierinjuries.InjuryRecord],
     lineups: ffs.LineupData | None,
+    team_gameweeks: dict[int, TeamGameweek],
 ) -> dict[int, AvailabilitySignal]:
     """Fuse FPL, PremierInjuries, predicted line-ups and transfer flow."""
     snapshots = context.store.recent_snapshots(limit=72)
@@ -753,6 +769,8 @@ def _build_availability_signals(
         if element.news_added_at is not None:
             news_age = (run_context.now_epoch - element.news_added_at.timestamp()) / 3600
 
+        hours_to_kickoff = _hours_to_kickoff(team_gameweeks.get(element.team), run_context.now_epoch)
+
         signals[element.id] = availability_domain.build_availability_signal(
             element,
             injury_status=record.status if record else None,
@@ -767,6 +785,7 @@ def _build_availability_signals(
             flow_cause=cause,
             snapshots_available=len(snapshots),
             news_age_hours=news_age,
+            hours_to_kickoff=hours_to_kickoff,
         )
 
     # Suppressed on the confirmed tier: by T-3h the pressers have happened, so a
@@ -880,6 +899,7 @@ def _score_all(
     signals: dict[int, AvailabilitySignal],
     scoring_context: scoring.ScoringContext,
     lineups: ffs.LineupData | None,
+    now_epoch: int,
 ) -> tuple[list[PlayerScore], dict[int, MinutesDistribution]]:
     """Score every transactable player.
 
@@ -914,6 +934,7 @@ def _score_all(
             season_has_started=scoring_context.season_has_started,
             predicted_to_start=predicted,
             games_played=scoring_context.team_games_played.get(element.team, 0),
+            hours_to_kickoff=_hours_to_kickoff(team_gameweek, now_epoch),
         )
         minutes_by_element[element.id] = minutes_dist
 
