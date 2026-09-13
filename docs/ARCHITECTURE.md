@@ -260,7 +260,7 @@ coverage.
 Coverage is the one to read. `mu * ceiling` is a term in the ranking objective,
 so an overstated P90 reorders the board while the mean stays perfectly
 calibrated - a failure mode no alarm here would ever fire on. See MODEL.md
-section 8.
+section 9.
 
 Deliberately logged rather than emitted as EMF. Unlike the metrics above, which
 are free because they ride on log lines already being written, a *custom* metric

@@ -498,7 +498,7 @@ prove.
 
 ---
 
-## 8. Knowing whether any of this works
+## 9. Knowing whether any of this works
 
 Every number above is a **starting prior**, not a finding. SPEC §5 says so
 explicitly, and §5.5 asks for a fit against historical gameweeks. That fit is not
